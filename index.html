@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>技術承継×職業病分析AI | REBAリスク評価</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Chart.js and dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-streaming@2.0.0"></script>
+    
+    <!-- PWA -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="apple-mobile-web-app-title" content="分析AI">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #ffffff; color: #000000; overscroll-behavior: none; }
+        .glass { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; }
+        .monochrome-border { border: 1px solid #000000; }
+        .bg-gray-soft { background-color: #f8f8f8; }
+        canvas#output-canvas { width: 100%; height: 100%; object-fit: contain; background: #000; }
+        video#input-video { display: none; }
+        .hidden { display: none; }
+        .modal { 
+            position: fixed; inset: 0; background: rgba(0,0,0,0.9); 
+            display: flex; align-items: center; justify-content: center; z-index: 200;
+            padding: 20px;
+        }
+        .report-modal { 
+            position: fixed; inset: 0; background: rgba(0,0,0,0.8); 
+            display: flex; align-items: center; justify-content: center; z-index: 100;
+            padding: 20px;
+        }
+        #debug-log {
+            position: fixed; bottom: 0; left: 0; right: 0; height: 100px;
+            background: rgba(0,0,0,0.8); color: #00ff00; font-family: monospace;
+            font-size: 8px; overflow-y: auto; z-index: 300; padding: 5px;
+            pointer-events: none; border-top: 1px solid #00ff00;
+            display: none; 
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col p-4 max-w-lg mx-auto md:max-w-5xl">
+
+    <!-- Header -->
+    <header class="flex justify-between items-center mb-6 border-b pb-4 border-black">
+        <h1 class="text-xl font-bold tracking-tighter uppercase">技術承継×職業病分析AI <span class="text-xs font-normal border-l border-black ml-2 pl-2">REBA評価</span></h1>
+        <div id="status-badge" class="px-2 py-1 rounded text-[10px] font-bold border border-black flex items-center gap-1.5">
+            <div id="status-dot" class="w-2 h-2 rounded-full bg-gray-400"></div>
+            <span id="status-text">読み込み中</span>
+        </div>
+    </header>
+
+    <!-- Main Viewport Area -->
+    <div class="relative w-full aspect-video monochrome-border rounded-lg overflow-hidden mb-6 bg-black" id="viewport-container">
+        <video id="input-video" playsinline webkit-playsinline muted></video>
+        <canvas id="output-canvas"></canvas>
+        
+        <!-- UI Overlays -->
+        <div id="processing-overlay" class="absolute inset-0 bg-white/90 flex flex-col items-center justify-center gap-4 transition-opacity">
+            <div class="w-10 h-10 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+            <p class="text-xs font-bold uppercase">AIモデル 読み込み中...</p>
+        </div>
+
+        <div class="absolute top-3 left-3 flex items-center gap-2 bg-white border border-black px-2 py-1 rounded text-[10px] font-bold">
+            <div id="live-dot" class="w-1.5 h-1.5 rounded-full bg-gray-400"></div>
+            <span id="mode-text">待機中</span>
+        </div>
+
+        <!-- Float Controls -->
+        <div class="absolute bottom-3 left-3 right-3 flex justify-end gap-2">
+            <button id="btn-record" class="bg-red-600 text-white px-4 py-2 rounded text-xs font-bold hover:bg-red-700 transition flex items-center gap-2">
+                録画開始
+            </button>
+            <button id="toggle-cam" class="bg-black text-white px-4 py-2 rounded text-xs font-bold hover:bg-gray-800 transition">
+                カメラ起動
+            </button>
+            <label for="video-upload" class="bg-white text-black border border-black px-4 py-2 rounded text-xs font-bold hover:bg-gray-100 transition flex items-center gap-2 cursor-pointer">
+                動画読込
+                <input type="file" id="video-upload" class="hidden" accept="video/*">
+            </label>
+        </div>
+    </div>
+
+    <!-- Comparison Section (Hidden) -->
+    <div id="comparison-section" class="mb-6 hidden border-t border-black pt-4">
+        <div class="flex justify-between items-center mb-3">
+             <h3 class="text-xs font-bold uppercase">比較モード</h3>
+             <div class="flex gap-2">
+                 <button id="btn-overlay-mode" class="bg-white border border-black text-[10px] px-3 py-1 font-bold hover:bg-black hover:text-white transition">オーバーレイ: OFF</button>
+                 <button id="sync-play" class="border border-black text-[10px] px-2 py-1 font-bold">同期再生</button>
+                 <button id="close-comparison" class="text-[10px] underline">閉じる</button>
+             </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+            <div class="aspect-video monochrome-border relative group bg-black">
+                <video id="ref-video" class="w-full h-full object-cover" playsinline webkit-playsinline muted loop></video>
+                <canvas id="ref-canvas" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
+                <div class="absolute inset-0 bg-white/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer" onclick="document.getElementById('ref-upload').click()">
+                    <span class="text-[8px] font-bold bg-white text-black px-2 py-1 border border-black">見本アップロード</span>
+                </div>
+                <input type="file" id="ref-upload" class="hidden" accept="video/*">
+            </div>
+            <div class="aspect-video monochrome-border relative group bg-black">
+                <video id="target-video" class="w-full h-full object-cover" playsinline webkit-playsinline muted loop></video>
+                <canvas id="target-canvas" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
+                <div class="absolute inset-0 bg-white/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer" onclick="document.getElementById('target-upload').click()">
+                    <span class="text-[8px] font-bold bg-white text-black px-2 py-1 border border-black">対象アップロード</span>
+                </div>
+                <input type="file" id="target-upload" class="hidden" accept="video/*">
+            </div>
+        </div>
+    </div>
+
+    <!-- 分析パネル -->
+    <div class="space-y-4 mb-24 flex-1">
+        <div class="grid grid-cols-2 gap-4">
+            <div class="bg-gray-soft p-4 rounded border border-black">
+                <span class="text-[10px] font-bold block mb-1 uppercase tracking-wider">REBA Score</span>
+                <div class="flex items-end gap-2">
+                    <span id="reba-score-value" class="text-4xl font-bold leading-none">1</span>
+                    <span id="risk-level-badge" class="text-[10px] font-bold border border-black px-2 py-0.5 rounded uppercase">Negligible</span>
+                </div>
+            </div>
+            <div class="bg-gray-soft p-4 rounded border border-black">
+                <span class="text-[10px] font-bold block mb-1 uppercase tracking-wider">Joint Status</span>
+                <div class="text-[10px] space-y-0.5">
+                    <div class="flex justify-between"><span>腰部負荷:</span><span id="back-load-value" class="font-bold">0</span></div>
+                    <div class="flex justify-between"><span>膝部負荷:</span><span id="knee-load-value" class="font-bold">0</span></div>
+                </div>
+            </div>
+        </div>
+        <div class="h-40 border border-black rounded p-2 overflow-hidden bg-white mb-4">
+            <canvas id="main-chart"></canvas>
+        </div>
+
+        <!-- 分析コントロールパネル -->
+        <div class="grid grid-cols-5 gap-2 border-t border-black pt-4 mb-20 text-[10px] font-bold uppercase overflow-x-auto whitespace-nowrap">
+            <button id="btn-show-selector" class="border border-black px-2 py-1 hover:bg-black hover:text-white transition">部位選択</button>
+            <button id="metric-velocity" class="metric-btn border border-black px-2 py-1 hover:bg-black hover:text-white transition">速度</button>
+            <button id="metric-angle" class="metric-btn border border-black px-2 py-1 bg-black text-white">角度</button>
+            <button id="btn-toggle-orbit" class="border border-black px-2 py-1 hover:bg-black hover:text-white transition">軌跡: OFF</button>
+            <select id="plane-select" class="border border-black bg-white px-2 py-1 outline-none">
+                <option value="XY">正面(XY)</option>
+                <option value="YZ">側面(YZ)</option>
+                <option value="XZ">水平(XZ)</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Report Modal (Hidden) -->
+    <div id="report-container" class="report-modal hidden">
+        <div class="bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 rounded-lg shadow-2xl border-4 border-black">
+            <div class="flex justify-between items-start mb-6 border-b-2 border-black pb-4">
+                <h2 class="text-2xl font-bold">動作分析レポート</h2>
+                <button id="close-report" class="text-xl font-bold">×</button>
+            </div>
+            
+            <div class="grid grid-cols-1 gap-6 mb-8">
+                <div>
+                    <h3 class="text-xs font-bold uppercase border-b-2 border-black mb-4 pb-1 tracking-widest">臨床フィードバック (PT/OT POV)</h3>
+                    <div id="ai-feedback" class="space-y-4">
+                        <div class="p-4 bg-gray-50 border-l-4 border-black italic text-sm text-gray-600">
+                            分析を完了すると、ここに専門家のアドバイスが表示されます。
+                        </div>
+                    </div>
+                </div>
+                <div>
+                    <h3 class="text-xs font-bold uppercase border-b-2 border-black mb-4 pb-1 tracking-widest">統計データ</h3>
+                    <div id="alignment-stats" class="text-[10px] grid grid-cols-2 gap-2">
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex gap-4">
+                <button id="btn-export-v2" class="flex-1 bg-black text-white font-bold py-3 rounded">CSVデータを保存</button>
+                <button id="btn-reset-v2" class="flex-1 border-2 border-black font-bold py-3 rounded">再計測</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 設定モーダル (Setup Modal) -->
+    <div id="setup-modal" class="modal">
+        <div class="bg-white w-full max-w-sm p-8 border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+            <h2 class="text-xl font-bold mb-6 border-b-2 border-black pb-2 uppercase tracking-tighter">Analysis Setup</h2>
+            <div class="space-y-6">
+                <div>
+                    <label class="text-[10px] font-bold uppercase block mb-3">荷重 / 負荷 (Load/Force)</label>
+                    <div class="grid grid-cols-2 gap-2 mb-2">
+                         <button type="button" id="btn-no-load" class="col-span-2 border-2 border-dashed border-black py-2 text-xs font-bold hover:bg-gray-100 transition">道具なし (歩行・自重など)</button>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2">
+                        <button type="button" class="load-btn border border-black py-2 text-xs font-bold hover:bg-black hover:text-white transition" data-value="0">5kg未満</button>
+                        <button type="button" class="load-btn border border-black py-2 text-xs font-bold hover:bg-black hover:text-white transition" data-value="1">5-10kg</button>
+                        <button type="button" class="load-btn border border-black py-2 text-xs font-bold hover:bg-black hover:text-white transition" data-value="2">10kg以上</button>
+                    </div>
+                </div>
+                <div>
+                    <label class="text-[10px] font-bold uppercase block mb-3">結合 / 把握 (Coupling)</label>
+                    <select id="coupling-select" class="w-full border border-black p-2 text-xs font-bold outline-none">
+                        <option value="0">良好 (Good)</option>
+                        <option value="1">普通 (Fair)</option>
+                        <option value="2">劣る (Poor)</option>
+                        <option value="3">許容不可 (Unacceptable)</option>
+                    </select>
+                </div>
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" id="sudden-force" class="w-4 h-4 accent-black">
+                    <label for="sudden-force" class="text-[10px] font-bold uppercase">急激な力・衝撃の発生 (+1)</label>
+                </div>
+                <button id="start-analysis" class="w-full bg-black text-white font-bold py-4 mt-4 hover:bg-gray-800 transition uppercase tracking-widest">
+                    Start Analysis
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 部位選択モーダル -->
+    <div id="selector-modal" class="modal hidden">
+        <div class="bg-white w-full max-w-sm p-6 border-4 border-black relative">
+            <button id="close-selector" class="absolute top-2 right-2 text-xl font-bold">×</button>
+            <h2 class="text-xs font-bold uppercase mb-4 border-b border-black pb-1 tracking-widest text-center">Select Analysis Part</h2>
+            <div class="flex justify-center mb-4">
+                <svg id="human-silhouette" viewBox="0 0 100 200" class="w-48 h-96">
+                    <path d="M50,10 C53,10 55,12 55,15 C55,18 53,20 50,20 C47,20 45,18 45,15 C45,12 47,10 50,10 Z M40,25 Q50,22 60,25 L65,60 Q50,55 35,60 Z" fill="#e5e7eb" stroke="#000" stroke-width="0.5" />
+                    <circle class="joint-point" data-id="0" cx="50" cy="15" r="3" fill="#000" />
+                    <circle class="joint-point" data-id="12" cx="35" cy="30" r="3" fill="#999" />
+                    <circle class="joint-point" data-id="11" cx="65" cy="30" r="3" fill="#999" />
+                    <circle class="joint-point" data-id="14" cx="30" cy="50" r="3" fill="#999" />
+                    <circle class="joint-point" data-id="13" cx="70" cy="50" r="3" fill="#999" />
+                    <circle class="joint-point" data-id="24" cx="42" cy="65" r="3" fill="#999" />
+                    <circle class="joint-point" data-id="23" cx="58" cy="65" r="3" fill="#999" />
+                    <circle class="joint-point" data-id="26" cx="40" cy="90" r="3" fill="#999" />
+                    <circle class="joint-point" data-id="25" cx="60" cy="90" r="3" fill="#999" />
+                    <circle class="joint-point" data-id="28" cx="38" cy="115" r="3" fill="#999" />
+                    <circle class="joint-point" data-id="27" cx="62" cy="115" r="3" fill="#999" />
+                </svg>
+            </div>
+            <p class="text-[8px] text-center text-gray-500 font-bold italic">分析したい関節ポイントをタップしてください</p>
+        </div>
+    </div>
+
+    <!-- フッター -->
+    <footer class="fixed bottom-6 left-1/2 -translate-x-1/2 w-[calc(100%-3rem)] max-w-lg bg-white border-2 border-black p-2 flex justify-between items-center px-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+        <button id="btn-stop" class="flex flex-col items-center gap-1 group opacity-50 cursor-not-allowed">
+            <div class="w-10 h-10 border border-black flex items-center justify-center rounded"><div class="w-4 h-4 bg-black"></div></div>
+            <span class="text-[8px] font-bold">分析終了</span>
+        </button>
+        <button id="btn-compare-toggle-v2" class="flex flex-col items-center gap-1">
+             <div class="w-10 h-10 border border-black flex items-center justify-center rounded">比較</div>
+             <span class="text-[8px] font-bold">比較</span>
+        </button>
+        <button id="btn-export-direct" class="flex flex-col items-center gap-1">
+            <div class="w-10 h-10 border border-black flex items-center justify-center rounded">保存</div>
+            <span class="text-[8px] font-bold">CSV保存</span>
+        </button>
+    </footer>
+
+    <script type="module" src="main.js"></script>
+</body>
+</html>
