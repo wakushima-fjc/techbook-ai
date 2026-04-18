@@ -11,7 +11,10 @@ import { ClinicalEngine } from "./clinical-engine.js";
 const debugArea = document.getElementById('debug-log');
 function log(msg) {
     console.log(`[AI] ${msg}`);
-    if (debugArea) { debugArea.style.display='block'; debugArea.innerHTML += ` > ${msg}<br>`; debugArea.scrollTop = debugArea.scrollHeight; }
+    if (debugArea && debugArea.style.display === 'block') {
+        debugArea.innerHTML += ` > ${msg}<br>`;
+        debugArea.scrollTop = debugArea.scrollHeight;
+    }
 }
 if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
 // ============================================================
@@ -30,8 +33,10 @@ const state = {
     isRunning: false, isPredicting: false, isRecording: false,
     rebaScore: 1, history: [],
     isComparing: false,
-    isVideoMode: false,   // 動画ファイル使用中か
+    isVideoMode: false,
     isLooping: false,
+    taskDescription: '',      // 作業内容の説明
+    taskRiskContext: null,    // AIが事前推測したリスクコンテキスト
     setup: { load: 0, coupling: 0, suddenForce: false },
     // 複数選択（Set of indices）
     selectedParts: new Set([23]),   // デフォルト: 左股関節
@@ -166,6 +171,10 @@ function setupEventListeners() {
     on('coupling-select', 'change', (e) => state.setup.coupling = parseInt(e.target.value));
     on(el.startBtn, 'click', () => {
         if (!isModelReady) { alert("AI準備中です..."); return; }
+        // 作業内容を取得してAIコンテキストを生成
+        const taskInput = document.getElementById('task-description');
+        state.taskDescription = taskInput ? taskInput.value.trim() : '';
+        state.taskRiskContext = analyzeTaskRisk(state.taskDescription);
         el.setupModal.classList.add('hidden');
         if (!el.video.src && !el.video.srcObject) startCamera();
     });
@@ -527,17 +536,84 @@ function initCharts() {
     });
     setInterval(() => {
         if (!state.isRunning || !mainChart) return;
+        // 動画モード時は再生中のみ更新、カメラモードは常時更新
+        if (state.isVideoMode && el.video.paused) return;
         const h = state.history[state.history.length-1]; if (!h) return;
         mainChart.data.datasets[0].data.push({ x: Date.now(), y: h.score });
         mainChart.data.datasets[1].data.push({ x: Date.now(), y: h.trunk });
     }, 500);
 }
 // ============================================================
+// ============================================================
+// TASK RISK ANALYSIS（作業内容の事前AIリスク推測）
+// ============================================================
+function analyzeTaskRisk(description) {
+    if (!description) return null;
+    const d = description.toLowerCase();
+    const context = { riskFactors: [], bodySites: [], precautions: [] };
+    // キーワードベースのリスク推測
+    if (d.includes('塗装') || d.includes('ペンキ') || d.includes('養生')) {
+        context.riskFactors.push('頭上作業による頸椎・肩関節への持続的負荷');
+        context.bodySites.push('頸部', '肩関節', '上肢');
+        context.precautions.push('作業台・脚立を活用し、腕を肩より高く上げる時間を最小化すること');
+    }
+    if (d.includes('溶接') || d.includes('切断') || d.includes('グラインダー')) {
+        context.riskFactors.push('前傾姿勢での精密作業による腰椎への慢性的圧迫');
+        context.bodySites.push('腰部', '手首', '前腕');
+        context.precautions.push('作業台の高さを腰〜臍の位置に調整し、体幹をなるべく立てて作業する');
+    }
+    if (d.includes('運搬') || d.includes('荷役') || d.includes('持ち上げ') || d.includes('重量')) {
+        context.riskFactors.push('重量物挙上時の腰椎椎間板への急激な圧迫ストレス');
+        context.bodySites.push('腰部', '膝関節', '股関節');
+        context.precautions.push('荷物を体に密着させ、膝を曲げた「スクワット形式」での挙上を徹底する');
+    }
+    if (d.includes('配管') || d.includes('電気') || d.includes('設備') || d.includes('取り付け')) {
+        context.riskFactors.push('狭所・不自然な姿勢での作業による全身への複合的負荷');
+        context.bodySites.push('腰部', '頸部', '膝関節');
+        context.precautions.push('定期的な姿勢変換と休息を取り入れ、同一姿勢での連続作業を20分以内に抑える');
+    }
+    if (d.includes('組み立て') || d.includes('製造') || d.includes('ライン')) {
+        context.riskFactors.push('繰り返し動作による筋・腱への累積疲労（反復性ストレス障害）');
+        context.bodySites.push('手首', '肘', '肩');
+        context.precautions.push('1時間毎に5分のストレッチ休憩を設け、作業の順番を変えることで同一部位の連続使用を避ける');
+    }
+    if (d.includes('農業') || d.includes('収穫') || d.includes('畑')) {
+        context.riskFactors.push('前屈姿勢での長時間作業による腰椎・股関節への持続的負荷');
+        context.bodySites.push('腰部', '股関節', '膝関節');
+        context.precautions.push('低い作業は膝立ちか小型いすを活用し、腰を曲げ続ける時間を最小化する');
+    }
+    // デフォルトリスク
+    if (context.riskFactors.length === 0) {
+        context.riskFactors.push('作業特有の反復動作による筋骨格系への累積ストレス');
+        context.bodySites.push('腰部', '頸部');
+        context.precautions.push('こまめな休息と姿勢変換を心がける');
+    }
+    return context;
+}
+// ============================================================
 // REPORT
 // ============================================================
 function showReport() {
-    const feedback = clinical.generateReport({ history: state.history, setup: state.setup });
+    const feedback = clinical.generateReport({ history: state.history, setup: state.setup, taskContext: state.taskRiskContext });
     el.aiFeedback.innerHTML = '';
+    // 作業内容を最初に表示
+    if (state.taskDescription) {
+        const taskDiv = document.createElement('div');
+        taskDiv.className = 'p-4 rounded-xl mb-2';
+        taskDiv.style.cssText = 'background:rgba(96,165,250,0.1);border:1px solid rgba(96,165,250,0.3)';
+        let preRisk = '';
+        if (state.taskRiskContext) {
+            preRisk = `<div class="mt-2 text-[9px] text-white/50">⚠ 事前リスク推測：${state.taskRiskContext.riskFactors.join(' / ')}</div>`;
+        }
+        taskDiv.innerHTML = `
+            <div class="flex items-center gap-2 mb-1">
+                <span class="text-[9px] font-black text-blue-400">📋 解析対象作業</span>
+            </div>
+            <p class="text-sm font-black text-white">${state.taskDescription}</p>
+            ${preRisk}
+        `;
+        el.aiFeedback.appendChild(taskDiv);
+    }
     feedback.forEach(item => {
         const d = document.createElement('div');
         d.className = 'p-4 rounded-xl border border-white/10 bg-white/5';
