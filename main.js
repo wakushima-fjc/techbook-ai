@@ -22,7 +22,7 @@ if ('serviceWorker' in navigator) {
     });
 }
 const state = {
-    isRunning: false, isRecording: false,
+    isRunning: false, isRecording: false, isPredicting: false,
     rebaScore: 1, history: [], lastVideoTime: -1,
     isComparing: false, isOverlay: false, refLandmarks: null,
     setup: { load: 0, coupling: 0, suddenForce: false },
@@ -95,7 +95,7 @@ async function init() {
         updateStatus('準備完了', 'bg-black');
         if (elements.overlay) elements.overlay.classList.add('hidden');
         initCharts();
-        log("Full AI Application Suite Ready.");
+        log("System Online. Version 2.1 Applied.");
     } catch (err) {
         log(`Fatal: ${err.message}`);
         updateStatus('初期化失敗', 'bg-red-600');
@@ -108,7 +108,7 @@ function updateStatus(text, colorClass) {
 function setupEventListeners() {
     const safeAdd = (idOrEl, type, fn) => {
         const el = typeof idOrEl === 'string' ? document.getElementById(idOrEl) : idOrEl;
-        if (el) el.addEventListener(type, (e) => { log(`Event: ${type} on ${idOrEl.id || "Element"}`); fn(e); });
+        if (el) el.addEventListener(type, (e) => { log(`User Action: ${idOrEl.id || "Interaction"}`); fn(e); });
     };
     safeAdd(document.getElementById('app-title'), 'click', () => {
         if (debugArea) debugArea.style.display = debugArea.style.display === 'block' ? 'none' : 'block';
@@ -121,7 +121,6 @@ function setupEventListeners() {
             document.querySelectorAll('.joint-point').forEach(jp => jp.setAttribute('fill', '#999'));
             e.target.setAttribute('fill', '#00ff00');
             elements.selectorModal.classList.add('hidden');
-            log(`Tracking Joint: ${state.selectedPart}`);
         });
     });
     document.querySelectorAll('.load-btn').forEach(btn => {
@@ -159,16 +158,16 @@ function setupEventListeners() {
         state.isRunning = false;
         showReport();
     });
-    safeAdd(elements.closeReportBtn, 'click', () => elements.reportModal.classList.add('hidden'));
     safeAdd(elements.btnRecord, 'click', toggleRecording);
     safeAdd('btn-export-direct', 'click', exportCSV);
-    safeAdd('btn-export-v2', 'click', exportCSV);
 }
 async function startCamera() {
     try {
+        log("Requesting camera...");
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
         elements.video.src = null;
         elements.video.srcObject = stream;
+        elements.video.load();
         elements.video.onloadedmetadata = () => {
             elements.canvas.width = elements.video.videoWidth;
             elements.canvas.height = elements.video.videoHeight;
@@ -179,24 +178,35 @@ async function startCamera() {
 }
 function loadVideoFile(file, video, canvas, isTarget = true) {
     if (!file) return;
+    log(`File selected: ${file.name}`);
     video.srcObject = null;
     video.src = URL.createObjectURL(file);
+    video.load(); // 重要: ブラウザに読込を再認識させる
     video.onloadedmetadata = () => {
+        log(`Video metadata loaded: ${video.videoWidth}x${video.videoHeight}`);
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
-        video.play();
-        if (isTarget) { state.isRunning = true; predict(); }
+        video.play().then(() => {
+            log("Video started playing.");
+            if (isTarget) { state.isRunning = true; predict(); }
+        }).catch(e => log(`Playback Error: ${e.message}`));
     };
 }
 function predict() {
-    if (!state.isRunning) return;
-    if (elements.compSection.classList.contains('hidden')) {
-        processFrame(elements.video, elements.canvas, ctx, true);
-    } else {
-        processFrame(elements.refVideo, elements.refCanvas, refCtx, false);
-        processFrame(elements.targetVideo, elements.targetCanvas, targetCtx, true);
-    }
-    requestAnimationFrame(predict);
+    if (!state.isRunning || state.isPredicting) return;
+    state.isPredicting = true;
+    
+    const run = () => {
+        if (!state.isRunning) { state.isPredicting = false; return; }
+        if (elements.compSection.classList.contains('hidden')) {
+            processFrame(elements.video, elements.canvas, ctx, true);
+        } else {
+            processFrame(elements.refVideo, elements.refCanvas, refCtx, false);
+            processFrame(elements.targetVideo, elements.targetCanvas, targetCtx, true);
+        }
+        requestAnimationFrame(run);
+    };
+    run();
 }
 function processFrame(video, canvas, context, isMain = true) {
     if (video.paused || video.ended) return;
@@ -238,13 +248,12 @@ function drawOrbits(ctx) {
     });
 }
 function calculateAnalytics(pl) {
-    // REBA 簡易計算ロジック
     const sC = { x: (pl[11].x+pl[12].x)/2, y: (pl[11].y+pl[12].y)/2 };
     const hC = { x: (pl[23].x+pl[24].x)/2, y: (pl[23].y+pl[24].y)/2 };
     const trunkAngle = Math.abs(Math.atan2(sC.x - hC.x, sC.y - hC.y) * 180 / Math.PI);
     const kneeAngle = Math.abs(Math.atan2(pl[26].x - pl[24].x, pl[26].y - pl[24].y) * 180 / Math.PI);
     
-    const score = Math.min(15, Math.floor(trunkAngle / 10) + (state.setup.load > 10 ? 3 : 1));
+    const score = Math.max(1, Math.min(15, Math.floor(trunkAngle / 10) + state.setup.load + 1));
     state.rebaScore = score;
     elements.rebaVal.innerText = score;
     const action = reba.getActionLevel(score);
@@ -256,15 +265,11 @@ function calculateAnalytics(pl) {
 }
 function initCharts() {
     const c = document.getElementById('main-chart');
+    if (!c) return;
     mainChart = new Chart(c, {
         type: 'line', data: { datasets: [{ label: 'REBA', data: [], borderColor: '#000', borderWidth: 2 }] },
         options: { scales: { x: { type: 'realtime' }, y: { min: 0, max: 15 } } }
     });
-    setInterval(() => {
-        if (state.isRunning && mainChart) {
-            mainChart.data.datasets[0].data.push({ x: Date.now(), y: state.rebaScore });
-        }
-    }, 1000);
 }
 function toggleRecording() {
     if (!state.isRecording) {
@@ -279,11 +284,10 @@ function toggleRecording() {
         };
         mediaRecorder.start();
         state.isRecording = true;
-        document.getElementById('record-icon').classList.add('rounded-sm');
+        log("Recording started...");
     } else {
         mediaRecorder.stop();
         state.isRecording = false;
-        document.getElementById('record-icon').classList.remove('rounded-sm');
     }
 }
 function showReport() {
@@ -301,6 +305,6 @@ function exportCSV() {
     let csv = "\uFEFFTime,Score,Trunk,Knee\n";
     state.history.forEach(h => csv += `${new Date(h.timestamp).toLocaleTimeString()},${h.score},${h.trunk.toFixed(1)},${h.knee.toFixed(1)}\n`);
     const b = new Blob([csv], { type: 'text/csv' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `Data_${Date.now()}.csv`; a.click();
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `Data.csv`; a.click();
 }
 init();
