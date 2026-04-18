@@ -118,15 +118,29 @@
                 </div>
             </div>
             <div class="glass rounded-xl p-4">
-                <span class="text-[8px] font-black uppercase text-white/40 mb-2 block">関節状態</span>
+                <span class="text-[8px] font-black uppercase text-white/40 mb-2 block">主要関節</span>
                 <div class="space-y-1 text-[10px] font-bold">
-                    <div class="flex justify-between text-white/70"><span>体幹角度</span><span id="back-load-value" class="text-white">0°</span></div>
-                    <div class="flex justify-between text-white/70"><span>膝屈曲角度</span><span id="knee-load-value" class="text-white">0°</span></div>
-                    <div class="flex justify-between text-white/70"><span>追跡部位</span><span id="tracked-value" class="text-[#00ff88]">—</span></div>
+                    <div class="flex justify-between text-white/70"><span>体幹前屈</span><span id="back-load-value" class="text-white">0°</span></div>
+                    <div class="flex justify-between text-white/70"><span>膝屈曲</span><span id="knee-load-value" class="text-white">0°</span></div>
+                    <div class="flex justify-between text-white/70"><span>追跡</span><span id="tracked-value" class="text-[#00ff88]">—</span></div>
                 </div>
             </div>
             <div class="col-span-2 glass rounded-xl p-3 h-28">
                 <canvas id="main-chart"></canvas>
+            </div>
+        </div>
+        <!-- ROM アラートパネル（JARM基準値リアルタイム比較） -->
+        <div class="glass rounded-xl p-3">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-[8px] font-black uppercase text-white/40 tracking-widest">関節可動域ステータス（JARM 2022基準）</span>
+                <span class="text-[7px] text-white/20">🟡 警告 90% 🔴 超過 100%</span>
+            </div>
+            <div id="rom-status-panel" class="grid grid-cols-1 md:grid-cols-2 gap-1">
+                <div class="flex items-center gap-2 py-0.5 px-1 rounded" style="background:rgba(255,255,255,0.04)">
+                    <span class="text-[8px] font-bold w-14 text-white/40">計測待機中</span>
+                    <div class="flex-1 h-1 rounded-full bg-white/10"></div>
+                    <span class="text-[8px] text-white/30 w-20 text-right">—</span>
+                </div>
             </div>
         </div>
         <!-- Action Bar -->
@@ -307,6 +321,6 @@
             if (el) { el.style.display='block'; el.innerHTML += `<div style="color:#ff8844"> [PROMISE] ${e.reason}</div>`; }
         };
     </script>
-    <script type="module" src="main.js?v=2-2"></script>
+    <script type="module" src="main.js?v=2-3"></script>
 </body>
 </html>
