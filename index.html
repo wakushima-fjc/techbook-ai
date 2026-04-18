@@ -1,61 +1,3 @@
-
-
-続けて
-3ファイルすべての更新が完了しました！
-
-今回の改善まとめ
-改善項目	内容
-レポート日本語化	体幹・膝・荷重・総合リスクを日本語でアドバイス。リスクレベルに応じて色分け表示
-部位選択UI刷新	SplaMotion風のリアルな骨格シルエットSVG。タップ判定を大きくし誤操作を防止
-軌跡のON/OFF	正しくボタンに接続。選択した関節の動きが緑のグラデーションの尾で表示される
-速度解析の切替	「角度解析」「速度解析」ボタンで即座に切替。追跡部位の速度をcm/s単位で表示
-デザインの刷新	全体をダークモード＋グラスモーフィズムに刷新。白バックから引き締まったプロ仕様に
-二重チャート	REBAスコアと体幹角度を同時にリアルタイム表示
-GitHubへのアップロードお願い
-以下の 3ファイル をアップロード（上書き）してください：
-
-index.html
-main.js
-clinical-engine.js
-アップロード後、サイトを再読み込みしてお試しください！
-
-3
-clinical-engine.js
-index.html
-main.js
-User uploaded media 1
-User uploaded media 2
-動画が繰り返し再生できたり、巻き戻しできるとより良いです。
-関節の追跡が複数選択できると良いです。
-index.html と main.js の両方が完成しました！
-
-今回追加した機能
-機能	詳細
-動画コントロールバー	動画ファイル読み込み時に自動表示。▶/⏸、⏮巻き戻し、🔁ループ、シークバー（ドラッグで任意の位置に移動）を完備
-再生速度	0.25x / 0.5x / 1x / 1.5x / 2x から選択可能
-複数関節の同時追跡	最大6関節を同時に選択でき、それぞれ異なる色（緑・赤・青・黄・紫・水）で軌跡を表示
-カラーバッジ	選択した関節がモーダル内と映像右上パネルの両方にカラーバッジで表示
-再タップで解除	選択済みの関節をもう一度タップすると解除できる
-アップロードお願い
-以下の 2ファイル をGitHubに上書きしてください：
-
-index.html
-main.js
-2
-index.html
-main.js
-
-
-
-
-
-
-
-
-index.html
-
-
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -223,6 +165,17 @@ index.html
                     <input type="checkbox" id="sudden-force" class="w-4 h-4 rounded">
                     <span class="text-xs font-bold text-white/70">急激な力・衝撃の発生 (+1)</span>
                 </label>
+                <!-- 作業内容の事前入力 -->
+                <div>
+                    <label class="text-[9px] font-black uppercase text-white/50 block mb-2">
+                        🤖 AI作業分析（任意）
+                    </label>
+                    <textarea id="task-description"
+                        class="w-full bg-white/5 border border-white/20 p-3 text-xs rounded-lg text-white resize-none placeholder-white/30 focus:border-blue-400 focus:outline-none transition"
+                        rows="2"
+                        placeholder="例：塗装職人の養生作業、溶接工の低所作業、農業の収穫作業..."></textarea>
+                    <p class="text-[8px] text-white/30 mt-1">入力すると、AIが作業特有のリスクを事前に推測し、レポートに反映します</p>
+                </div>
                 <button id="start-analysis" class="w-full bg-white text-black font-black py-4 mt-2 hover:bg-white/90 transition uppercase tracking-widest text-sm rounded-xl">🚀 解析を開始</button>
             </div>
         </div>
@@ -357,4 +310,3 @@ index.html
     <script type="module" src="main.js?v=2-2"></script>
 </body>
 </html>
-
