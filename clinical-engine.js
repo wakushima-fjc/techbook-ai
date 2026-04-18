@@ -4,10 +4,18 @@
  */
 export class ClinicalEngine {
     constructor() {
-        this.expertThresholds = {
-            trunkFlexion: 20,
-            kneeFlexionDeep: 120,
-            torqueSafeLimit: 50
+        // JARM 2022年改訂版 関節可動域基準値（参考値）
+        this.ROM = {
+            trunkFlexion:    45,  // 体幹前屈  JARM基準 45°
+            neckFlexion:     60,  // 頸部前屈  JARM基準 60°
+            kneeFlexionNorm: 150, // 膝屈曲    JARM基準 150°
+            hipFlexionNorm:  125, // 股関節屈曲 JARM基準 125°
+        };
+        // REBA評価閾値
+        this.rebaThreshold = {
+            trunkCaution: 20,  // REBA score 2〜3境界
+            trunkHigh:    45,  // JARM基準値超過
+            kneeDeep:     120, // 膝深屈曲（REBA脚部スコア加算）
         };
     }
     generateReport(data) {
@@ -26,37 +34,43 @@ export class ClinicalEngine {
                          `【推奨対策】${taskContext.precautions.join(' また、')}`
             });
         }
-        // 1. 体幹（腰椎）の分析
-        if (stats.maxTrunk > this.expertThresholds.trunkFlexion) {
-            const severity = stats.maxTrunk > 60 ? "高" : stats.maxTrunk > 40 ? "中" : "低";
+        // 1. 体幹（腰椎）の分析 - JARM基準: 前屈 45°
+        if (stats.maxTrunk > this.rebaThreshold.trunkHigh) {
             feedback.push({
                 part: "腰部・体幹",
-                priority: severity + "リスク",
-                color: stats.maxTrunk > 60 ? '#ef4444' : '#f59e0b',
-                comment: `体幹の前傾角度が最大 ${stats.maxTrunk.toFixed(1)}° に達しています。理学療法の観点では、20°を超える前傾姿勢での作業は腰椎椎間板（特にL4/L5・L5/S1）への圧迫ストレスを急増させます。「股関節のヒンジ動作」を意識し、お尻を後ろに引くようにして体幹を立てることで、腰への負担を大幅に軽減できます。`
+                priority: "高リスク",
+                color: '#ef4444',
+                comment: `体幹の前傾角度が最大 ${stats.maxTrunk}° に達しており、JARM基準の前屈可動域（45°）を超過しています。この角度での作業は腰椎椎間板（特にL4/L5・L5/S1）への圧迫ストレスを急増させます。「股関節のヒンジ動作」を意識し、お尻を後ろに引くようにして体幹を立てることで、腰への負担を大幅に軽減できます。`
+            });
+        } else if (stats.maxTrunk > this.rebaThreshold.trunkCaution) {
+            feedback.push({
+                part: "腰部・体幹",
+                priority: "要注意",
+                color: '#f59e0b',
+                comment: `体幹の前傾角度が最大 ${stats.maxTrunk}° に達しています。JARM基準の前屈可動域は45°ですが、REBAでは20°を超えると姿勢スコアが上がります（作業姿勢リスク増加）。長時間の継続は腰椎への慢性的なストレスにつながりますので、こまめな姿勢のリセットを心がけてください。`
             });
         } else {
             feedback.push({
                 part: "腰部・体幹",
                 priority: "良好",
                 color: '#22c55e',
-                comment: `体幹の前傾角度は許容範囲内（最大 ${stats.maxTrunk.toFixed(1)}°）を維持できています。この姿勢を継続することで、腰椎への慢性的な負担を最小化できます。`
+                comment: `体幹の前傾角度は最大 ${stats.maxTrunk}° と、JARM基準（前屈45°）・REBA安全範囲（0-20°）の両方において良好な範囲内を維持できています。この姿勢を継続することで、腰椎への慢性的な負担を最小化できます。`
             });
         }
-        // 2. 膝関節の分析
-        if (stats.maxKnee > this.expertThresholds.kneeFlexionDeep) {
+        // 2. 膝関節の分析 - JARM基準: 屈曲 150°
+        if (stats.maxKnee > this.rebaThreshold.kneeDeep) {
             feedback.push({
                 part: "膝関節",
                 priority: "中リスク",
                 color: '#f59e0b',
-                comment: `膝の屈曲角度が深く（最大 ${stats.maxKnee.toFixed(1)}°）、半月板・膝蓋軟骨への負担が増大しています。「つま先が膝より前に出ている」場合は特に注意が必要です。足裏全体に体重を分散し、臀筋（大臀筋・中臀筋）を積極的に使って立ち上がる動作を習得することが重要です。`
+                comment: `膝の屈曲角度が深く（最大 ${stats.maxKnee}°）、半月板・膝蓋軟骨への負担が増大しています。JARM基準の膝屈曲可動域は150°ですが、作業中に120°を超える深屈曲が繰り返されると、膝関節への累積ストレスが高まります。「つま先が膝より前に出ている」場合は特に注意が必要です。足裏全体に体重を分散し、臀筋（大臀筋・中臀筋）を積極的に使って立ち上がる動作を習得することが重要です。`
             });
         } else {
             feedback.push({
                 part: "膝関節",
                 priority: "良好",
                 color: '#22c55e',
-                comment: `膝関節の屈曲角度は適切な範囲内です（最大 ${stats.maxKnee.toFixed(1)}°）。この動作パターンは膝への長期的な負担を軽減し、職業病の予防につながります。`
+                comment: `膝関節の屈曲角度は適切な範囲内です（最大 ${stats.maxKnee}°、JARM基準150°）。この動作パターンは膝への長期的な負担を軽減し、職業病の予防につながります。`
             });
         }
         // 3. 荷重・負荷の分析
