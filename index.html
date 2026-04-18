@@ -23,13 +23,14 @@
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #ffffff; color: #000000; overscroll-behavior: none; }
         .glass { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; }
+        header { position: relative; z-index: 300; background: white; }
         .monochrome-border { border: 1px solid #000000; }
         .bg-gray-soft { background-color: #f8f8f8; }
         canvas#output-canvas { width: 100%; height: 100%; object-fit: contain; background: #000; }
         video#input-video { display: none; }
         .hidden { display: none; }
         .modal { 
-            position: fixed; inset: 0; background: rgba(0,0,0,0.9); 
+            position: fixed; inset: 0; background: rgba(0,0,0,0.95); 
             display: flex; align-items: center; justify-content: center; z-index: 200;
             padding: 20px;
         }
@@ -39,14 +40,30 @@
             padding: 20px;
         }
         #debug-log {
-            position: fixed; bottom: 0; left: 0; right: 0; height: 100px;
-            background: rgba(0,0,0,0.8); color: #00ff00; font-family: monospace;
-            font-size: 8px; overflow-y: auto; z-index: 300; padding: 5px;
-            pointer-events: none; border-top: 1px solid #00ff00;
-            display: none; 
+            position: fixed; bottom: 0; left: 0; right: 0; height: 180px;
+            background: rgba(0, 0, 0, 0.95); color: #00ff00; font-family: monospace;
+            font-size: 10px; overflow-y: auto; z-index: 9999; padding: 10px;
+            border-top: 2px solid #00ff00;
+            display: block; 
+            pointer-events: auto;
         }
     </style>
 </head>
+<script>
+    window.onerror = function(msg, url, line, col, error) {
+        const logEl = document.getElementById('debug-log');
+        if (logEl) {
+            logEl.innerHTML += `<div style="color:red; font-weight:bold;"> [SYSTEM ERROR] ${msg} at ${line}:${col}</div>`;
+        }
+        return false;
+    };
+    window.onunhandledrejection = function(event) {
+        const logEl = document.getElementById('debug-log');
+        if (logEl) {
+            logEl.innerHTML += `<div style="color:red"> [PROMISE ERROR] ${event.reason}</div>`;
+        }
+    };
+</script>
 <body class="min-h-screen flex flex-col p-4 max-w-lg mx-auto md:max-w-5xl">
 
     <!-- Header -->
@@ -262,6 +279,9 @@
             <span class="text-[8px] font-bold">CSV保存</span>
         </button>
     </footer>
+
+    <!-- デバッグログ表示 -->
+    <div id="debug-log">Rescue Console: Waiting for JS...<br></div>
 
     <script type="module" src="main.js"></script>
 </body>
