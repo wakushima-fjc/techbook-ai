@@ -1,307 +1,511 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>技術承継×職業病分析AI | REBA評価</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/luxon@3.4.4"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.3.1"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-streaming@2.0.0"></script>
-    <link rel="manifest" href="manifest.json">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <style>
-        :root { --accent: #000000; }
-        body { font-family: 'Noto Sans JP', 'Inter', sans-serif; background: #0a0a0a; color: #fff; overscroll-behavior: none; }
-        .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 500; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(8px); }
-        .hidden { display: none !important; }
-        #debug-log { position: fixed; top: 0; left: 0; right: 0; height: 80px; background: rgba(0,20,0,0.9); color: #00ff88; font-family: monospace; font-size: 9px; z-index: 2000; padding: 8px; overflow-y: auto; pointer-events: none; display: none; border-bottom: 1px solid #00ff88; }
-        canvas#output-canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
-        .glass { background: rgba(255,255,255,0.06); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.12); }
-        .neon { box-shadow: 0 0 20px rgba(0,255,136,0.3); }
-        /* 部位選択SVGスタイル */
-        .joint-point { cursor: pointer; transition: all 0.2s; }
-        .joint-point:hover { filter: brightness(1.5); }
-        .joint-point.active { fill: #00ff88 !important; filter: drop-shadow(0 0 6px #00ff88); }
-        .body-segment { fill: #2a2a2a; stroke: #444; stroke-width: 1; }
-        .bone-line { stroke: #555; stroke-width: 2; fill: none; }
-        /* スコアの色 */
-        .score-low { background: #22c55e; color: #fff; }
-        .score-mid { background: #f59e0b; color: #fff; }
-        .score-high { background: #ef4444; color: #fff; }
-        .score-critical { background: #7c3aed; color: #fff; }
-    </style>
-</head>
-<body class="min-h-screen flex flex-col p-3 md:p-6">
-    <div id="debug-log">System Logs...</div>
-    <!-- Header -->
-    <header class="flex justify-between items-center mb-4 pb-3 border-b border-white/10">
-        <div>
-            <h1 id="app-title" class="text-lg font-black tracking-tight cursor-pointer leading-none">
-                技術承継×職業病分析AI
-            </h1>
-            <span class="text-[9px] text-white/40 font-bold tracking-widest">BIOMECHANICAL REBA ANALYSIS V2.1</span>
-        </div>
-        <div id="status-badge" class="flex items-center gap-2 glass px-3 py-1.5 rounded-full">
-            <div id="status-dot" class="w-2 h-2 rounded-full bg-gray-500"></div>
-            <span id="status-text" class="text-[9px] font-black uppercase tracking-wider text-white/70">起動中</span>
-        </div>
-    </header>
-    <main class="flex-1 flex flex-col gap-4 max-w-5xl mx-auto w-full">
-        <!-- Viewport -->
-        <div class="relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-white/10" id="viewport">
-            <video id="input-video" playsinline muted loop webkit-playsinline
-                   style="position:absolute; opacity:0; pointer-events:none; width:1px; height:1px;"></video>
-            <canvas id="output-canvas"></canvas>
-            <!-- Floating top-left controls -->
-            <div class="absolute top-3 left-3 flex flex-col gap-2">
-                <div class="glass px-2.5 py-1 rounded-full text-[9px] font-bold flex items-center gap-1.5">
-                    <span class="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span> LIVE
-                </div>
-                <button id="btn-show-selector" class="glass px-3 py-1.5 rounded-full text-[10px] font-bold hover:bg-white/20 transition">
-                    🦷 部位選択
-                </button>
-            </div>
-            <!-- Floating top-right: selected joint info -->
-            <div id="joint-info-panel" class="absolute top-3 right-3 glass px-3 py-2 rounded-xl text-[9px] font-bold hidden">
-                <div class="text-white/50 mb-0.5">追跡中</div>
-                <div id="joint-name-display" class="text-[#00ff88] font-black">—</div>
-                <div id="joint-value-display" class="text-white mt-1">—</div>
-            </div>
-            <!-- Floating bottom-right controls -->
-            <div class="absolute bottom-3 right-3 flex gap-2 items-center">
-                <button id="toggle-cam" class="glass w-9 h-9 rounded-full flex items-center justify-center hover:bg-white/20 transition text-base">📷</button>
-                <label for="video-upload" class="glass w-9 h-9 rounded-full flex items-center justify-center cursor-pointer hover:bg-white/20 transition text-base">📹
-                    <input type="file" id="video-upload" class="hidden" accept="video/*">
-                </label>
-                <button id="btn-record" class="w-9 h-9 rounded-full bg-red-600 border border-red-400 flex items-center justify-center hover:bg-red-500 transition">
-                    <div id="record-icon" class="w-3 h-3 rounded-full bg-white"></div>
-                </button>
-            </div>
-            <!-- Loading overlay -->
-            <div id="processing-overlay" class="absolute inset-0 bg-black/95 flex flex-col items-center justify-center gap-4">
-                <div class="w-14 h-14 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
-                <div class="text-center">
-                    <p class="text-[10px] font-black uppercase tracking-widest text-white/60 mb-1">AIエンジン初期化中</p>
-                    <p class="text-[8px] text-white/30">MediaPipe Vision Tasks Loading...</p>
-                </div>
-            </div>
-        </div>
-        <!-- Stats Grid -->
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div class="glass rounded-xl p-4">
-                <span class="text-[8px] font-black uppercase text-white/40 mb-1 block">REBAスコア</span>
-                <div class="flex items-baseline gap-2">
-                    <span id="reba-score-value" class="text-5xl font-black italic leading-none">1</span>
-                    <span id="risk-level-badge" class="text-[7px] font-black px-1.5 py-0.5 rounded uppercase score-low">問題なし</span>
-                </div>
-            </div>
-            <div class="glass rounded-xl p-4">
-                <span class="text-[8px] font-black uppercase text-white/40 mb-2 block">関節状態</span>
-                <div class="space-y-1 text-[10px] font-bold">
-                    <div class="flex justify-between text-white/70"><span>体幹角度</span><span id="back-load-value" class="text-white">0°</span></div>
-                    <div class="flex justify-between text-white/70"><span>膝屈曲角度</span><span id="knee-load-value" class="text-white">0°</span></div>
-                    <div class="flex justify-between text-white/70"><span>追跡部位</span><span id="tracked-value" class="text-[#00ff88]">—</span></div>
-                </div>
-            </div>
-            <div class="col-span-2 glass rounded-xl p-3 h-28">
-                <canvas id="main-chart"></canvas>
-            </div>
-        </div>
-        <!-- Action Bar -->
-        <div class="grid grid-cols-3 gap-2 mb-4">
-            <button id="btn-stop" class="glass rounded-xl py-3 text-[10px] font-black uppercase hover:bg-white/10 transition">⏹ 解析終了</button>
-            <button id="btn-compare-toggle-v2" class="glass rounded-xl py-3 text-[10px] font-black uppercase hover:bg-white/10 transition">⚡ 比較モード</button>
-            <button id="btn-export-direct" class="glass rounded-xl py-3 text-[10px] font-black uppercase hover:bg-white/10 transition">📊 CSV保存</button>
-        </div>
-    </main>
-    <!-- ==================== MODALS ==================== -->
-    <!-- Setup Modal -->
-    <div id="setup-modal" class="modal">
-        <div class="bg-[#111] w-full max-w-sm p-8 rounded-2xl border border-white/10 shadow-2xl">
-            <h2 class="text-2xl font-black mb-2 uppercase italic tracking-tighter">Analysis Setup</h2>
-            <p class="text-[9px] text-white/40 mb-8 uppercase tracking-widest">解析の前に荷重条件を設定してください</p>
-            <div class="space-y-6">
-                <div>
-                    <label class="text-[9px] font-black uppercase text-white/50 block mb-3">荷重 / 負荷</label>
-                    <button type="button" id="btn-no-load" class="w-full border border-dashed border-white/30 py-3 text-xs font-bold text-white/70 hover:border-white hover:text-white mb-2 rounded-lg transition">道具なし（歩行・自重など）</button>
-                    <div class="grid grid-cols-3 gap-2">
-                        <button type="button" class="load-btn border border-white/20 py-3 text-xs font-bold rounded-lg hover:border-white transition" data-value="0">5kg未満</button>
-                        <button type="button" class="load-btn border border-white/20 py-3 text-xs font-bold rounded-lg hover:border-white transition" data-value="1">5-10kg</button>
-                        <button type="button" class="load-btn border border-white/20 py-3 text-xs font-bold rounded-lg hover:border-white transition" data-value="2">10kg以上</button>
-                    </div>
-                </div>
-                <div>
-                    <label class="text-[9px] font-black uppercase text-white/50 block mb-3">結合 / 把握</label>
-                    <select id="coupling-select" class="w-full bg-white/5 border border-white/20 p-3 text-xs font-bold rounded-lg text-white">
-                        <option value="0">良好 (Good)</option>
-                        <option value="1">普通 (Fair)</option>
-                        <option value="2">劣る (Poor)</option>
-                        <option value="3">不適切 (Unacceptable)</option>
-                    </select>
-                </div>
-                <label class="flex items-center gap-3 cursor-pointer">
-                    <input type="checkbox" id="sudden-force" class="w-4 h-4 rounded">
-                    <span class="text-xs font-bold text-white/70">急激な力・衝撃の発生 (+1)</span>
-                </label>
-                <button id="start-analysis" class="w-full bg-white text-black font-black py-4 mt-2 hover:bg-white/90 transition uppercase tracking-widest text-sm rounded-xl">
-                    🚀 解析を開始
-                </button>
-            </div>
-        </div>
-    </div>
-    <!-- 部位選択モーダル（SplaMotion風） -->
-    <div id="selector-modal" class="modal hidden">
-        <div class="bg-[#111] w-full max-w-xs p-6 rounded-2xl border border-white/10 flex flex-col items-center">
-            <h3 class="text-base font-black uppercase mb-1">部位選択</h3>
-            <p class="text-[9px] text-white/40 mb-4">追跡する関節をタップしてください</p>
-            <!-- 人体シルエット SVG（SplaMotion風） -->
-            <div class="relative w-48 h-72 mb-4">
-                <svg viewBox="0 0 120 240" class="w-full h-full" id="body-svg">
-                    <!-- 骨格ライン -->
-                    <line x1="60" y1="28" x2="60" y2="90" class="bone-line"/> <!-- 脊柱 -->
-                    <line x1="60" y1="45" x2="30" y2="75" class="bone-line"/> <!-- 左上腕 -->
-                    <line x1="60" y1="45" x2="90" y2="75" class="bone-line"/> <!-- 右上腕 -->
-                    <line x1="30" y1="75" x2="15" y2="105" class="bone-line"/> <!-- 左前腕 -->
-                    <line x1="90" y1="75" x2="105" y2="105" class="bone-line"/> <!-- 右前腕 -->
-                    <line x1="60" y1="90" x2="48" y2="140" class="bone-line"/> <!-- 左大腿 -->
-                    <line x1="60" y1="90" x2="72" y2="140" class="bone-line"/> <!-- 右大腿 -->
-                    <line x1="48" y1="140" x2="44" y2="195" class="bone-line"/> <!-- 左下腿 -->
-                    <line x1="72" y1="140" x2="76" y2="195" class="bone-line"/> <!-- 右下腿 -->
-                    <!-- 頭部 -->
-                    <circle cx="60" cy="16" r="13" class="body-segment"/>
-                    <!-- 胴体 -->
-                    <ellipse cx="60" cy="65" rx="18" ry="25" class="body-segment"/>
-                    <!-- 関節点 - クリック可能 (大きめ) -->
-                    <!-- 頭・鼻 -->
-                    <circle id="jp-0" data-id="0" data-name="頭部" cx="60" cy="10" r="12" fill="transparent" class="joint-point"/>
-                    <circle cx="60" cy="10" r="5" fill="#555" class="pointer-events-none"/>
-                    <!-- 左肩 -->
-                    <circle id="jp-11" data-id="11" data-name="左肩" cx="36" cy="44" r="12" fill="transparent" class="joint-point"/>
-                    <circle cx="36" cy="44" r="6" fill="#555" class="pointer-events-none" id="jp-11-dot"/>
-                    <!-- 右肩 -->
-                    <circle id="jp-12" data-id="12" data-name="右肩" cx="84" cy="44" r="12" fill="transparent" class="joint-point"/>
-                    <circle cx="84" cy="44" r="6" fill="#555" class="pointer-events-none" id="jp-12-dot"/>
-                    <!-- 左肘 -->
-                    <circle id="jp-13" data-id="13" data-name="左肘" cx="28" cy="76" r="12" fill="transparent" class="joint-point"/>
-                    <circle cx="28" cy="76" r="5" fill="#555" class="pointer-events-none" id="jp-13-dot"/>
-                    <!-- 右肘 -->
-                    <circle id="jp-14" data-id="14" data-name="右肘" cx="92" cy="76" r="12" fill="transparent" class="joint-point"/>
-                    <circle cx="92" cy="76" r="5" fill="#555" class="pointer-events-none" id="jp-14-dot"/>
-                    <!-- 左手首 -->
-                    <circle id="jp-15" data-id="15" data-name="左手首" cx="14" cy="106" r="12" fill="transparent" class="joint-point"/>
-                    <circle cx="14" cy="106" r="4" fill="#555" class="pointer-events-none" id="jp-15-dot"/>
-                    <!-- 右手首 -->
-                    <circle id="jp-16" data-id="16" data-name="右手首" cx="106" cy="106" r="12" fill="transparent" class="joint-point"/>
-                    <circle cx="106" cy="106" r="4" fill="#555" class="pointer-events-none" id="jp-16-dot"/>
-                    <!-- 腰（重心） -->
-                    <circle id="jp-23" data-id="23" data-name="左股関節" cx="50" cy="90" r="12" fill="transparent" class="joint-point"/>
-                    <circle cx="50" cy="90" r="6" fill="#888" class="pointer-events-none" id="jp-23-dot"/>
-                    <circle id="jp-24" data-id="24" data-name="右股関節" cx="70" cy="90" r="12" fill="transparent" class="joint-point"/>
-                    <circle cx="70" cy="90" r="6" fill="#888" class="pointer-events-none" id="jp-24-dot"/>
-                    <!-- 左膝 -->
-                    <circle id="jp-25" data-id="25" data-name="左膝" cx="46" cy="140" r="12" fill="transparent" class="joint-point"/>
-                    <circle cx="46" cy="140" r="6" fill="#555" class="pointer-events-none" id="jp-25-dot"/>
-                    <!-- 右膝 -->
-                    <circle id="jp-26" data-id="26" data-name="右膝" cx="74" cy="140" r="12" fill="transparent" class="joint-point"/>
-                    <circle cx="74" cy="140" r="6" fill="#555" class="pointer-events-none" id="jp-26-dot"/>
-                    <!-- 左足首 -->
-                    <circle id="jp-27" data-id="27" data-name="左足首" cx="44" cy="196" r="12" fill="transparent" class="joint-point"/>
-                    <circle cx="44" cy="196" r="4" fill="#555" class="pointer-events-none" id="jp-27-dot"/>
-                    <!-- 右足首 -->
-                    <circle id="jp-28" data-id="28" data-name="右足首" cx="76" cy="196" r="12" fill="transparent" class="joint-point"/>
-                    <circle cx="76" cy="196" r="4" fill="#555" class="pointer-events-none" id="jp-28-dot"/>
-                </svg>
-                <!-- 凡例 -->
-                <div class="absolute -right-2 top-0 flex flex-col gap-2 text-[8px]">
-                    <div class="flex items-center gap-1"><div class="w-2 h-2 rounded-full bg-[#555]"></div><span class="text-white/50">未選択</span></div>
-                    <div class="flex items-center gap-1"><div class="w-2 h-2 rounded-full bg-[#00ff88]"></div><span class="text-white/50">追跡中</span></div>
-                </div>
-            </div>
-            <!-- 解析モード切替 -->
-            <div class="w-full space-y-3">
-                <div class="grid grid-cols-2 gap-2">
-                    <button id="metric-angle" class="border border-white py-2.5 text-[10px] font-black uppercase rounded-lg bg-white text-black transition">📐 角度解析</button>
-                    <button id="metric-velocity" class="border border-white/20 py-2.5 text-[10px] font-black uppercase rounded-lg text-white/60 hover:border-white hover:text-white transition">💨 速度解析</button>
-                </div>
-                <select id="plane-select" class="w-full bg-white/5 border border-white/20 p-2.5 text-[10px] font-black rounded-lg text-white">
-                    <option value="XY">📹 前面プレーン (XY)</option>
-                    <option value="YZ">📹 側面プレーン (YZ)</option>
-                    <option value="XZ">📹 上面プレーン (XZ)</option>
-                </select>
-                <button id="btn-toggle-orbit" class="w-full border border-white/20 py-2.5 text-[10px] font-black uppercase rounded-lg text-white/60 hover:border-white hover:text-white transition">
-                    🔵 軌跡表示: OFF
-                </button>
-                <button id="close-selector" class="w-full bg-white text-black py-3 text-[10px] font-black uppercase rounded-lg hover:bg-white/90 transition">決定して閉じる</button>
-            </div>
-        </div>
-    </div>
-    <!-- レポートモーダル -->
-    <div id="report-container" class="modal hidden">
-        <div class="bg-[#111] w-full max-w-lg p-6 rounded-2xl border border-white/10 max-h-[90vh] flex flex-col">
-            <div class="flex justify-between items-center mb-6">
-                <div>
-                    <h2 class="text-xl font-black uppercase italic tracking-tighter">解析レポート</h2>
-                    <p class="text-[8px] text-white/30 uppercase">Biomechanical Analysis Report</p>
-                </div>
-                <button id="close-report" class="glass px-3 py-1.5 rounded-full text-[9px] font-bold hover:bg-white/10 transition">✕ 閉じる</button>
-            </div>
-            <div id="ai-feedback" class="flex-1 overflow-y-auto space-y-3 mb-4 pr-1">
-                <!-- Feedback injected by JS -->
-            </div>
-            <div id="alignment-stats" class="grid grid-cols-2 gap-2 mb-4 text-[9px]">
-                <!-- Stats injected by JS -->
-            </div>
-            <button id="btn-export-v2" class="w-full border border-white/20 py-3 font-black uppercase text-xs rounded-xl hover:bg-white/10 transition">📊 CSVデータを保存</button>
-        </div>
-    </div>
-    <!-- 比較モーダル -->
-    <div id="comparison-section" class="modal hidden">
-        <div class="bg-[#111] w-full max-w-4xl p-6 rounded-2xl border border-white/10 flex flex-col gap-4">
-            <div class="flex justify-between items-center">
-                <h3 class="text-lg font-black uppercase">熟練度比較分析</h3>
-                <button id="btn-compare-close" class="glass px-3 py-1.5 rounded-full text-[9px] font-bold">✕ 閉じる</button>
-            </div>
-            <div class="grid grid-cols-2 gap-4">
-                <div class="flex flex-col gap-2">
-                    <span class="text-[9px] font-black text-white/50 uppercase">熟練者（お手本）</span>
-                    <div class="relative aspect-video bg-black rounded-xl overflow-hidden border border-white/10">
-                        <video id="ref-video" class="hidden" playsinline muted loop style="position:absolute;opacity:0;width:1px;height:1px;"></video>
-                        <canvas id="ref-canvas" class="w-full h-full"></canvas>
-                        <label for="ref-upload" class="absolute inset-0 flex items-center justify-center bg-black/60 cursor-pointer hover:bg-black/40 transition">
-                            <div class="text-center"><div class="text-2xl mb-1">📹</div><span class="text-[9px] font-bold">動画を選択</span></div>
-                            <input type="file" id="ref-upload" class="hidden" accept="video/*">
-                        </label>
-                    </div>
-                </div>
-                <div class="flex flex-col gap-2">
-                    <span class="text-[9px] font-black text-white/50 uppercase">解析対象者</span>
-                    <div class="relative aspect-video bg-black rounded-xl overflow-hidden border border-white/10">
-                        <video id="target-video" class="hidden" playsinline muted loop style="position:absolute;opacity:0;width:1px;height:1px;"></video>
-                        <canvas id="target-canvas" class="w-full h-full"></canvas>
-                        <label for="target-upload" class="absolute inset-0 flex items-center justify-center bg-black/60 cursor-pointer hover:bg-black/40 transition">
-                            <div class="text-center"><div class="text-2xl mb-1">📹</div><span class="text-[9px] font-bold">動画を選択</span></div>
-                            <input type="file" id="target-upload" class="hidden" accept="video/*">
-                        </label>
-                    </div>
-                </div>
-            </div>
-            <button id="sync-play" class="bg-white text-black px-8 py-3 text-xs font-black uppercase rounded-xl mx-auto hover:bg-white/90 transition">⏯ 同時再生開始</button>
-        </div>
-    </div>
-    <script>
-        window.onerror = function(msg, url, line, col) {
-            const el = document.getElementById('debug-log');
-            if (el) { el.style.display = 'block'; el.innerHTML += `<div style="color:#ff4444"> [ERROR] ${msg} (line ${line})</div>`; }
+import {
+  PoseLandmarker,
+  FilesetResolver,
+  DrawingUtils
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.2/+esm";
+import { REBAEngine } from "./reba-engine.js";
+import { ClinicalEngine } from "./clinical-engine.js";
+// --- デバッグログ ---
+const debugArea = document.getElementById('debug-log');
+function log(msg) {
+    console.log(`[AI] ${msg}`);
+    if (debugArea) {
+        debugArea.style.display = 'block';
+        debugArea.innerHTML += ` > ${msg}<br>`;
+        debugArea.scrollTop = debugArea.scrollHeight;
+    }
+}
+// --- Service Worker ---
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+}
+// --- アプリの状態 ---
+const state = {
+    isRunning: false, isPredicting: false, isRecording: false,
+    rebaScore: 1, history: [],
+    isComparing: false,
+    setup: { load: 0, coupling: 0, suddenForce: false },
+    // 部位・解析モード
+    selectedPart: 23,           // デフォルト: 左股関節
+    selectedPartName: '左股関節',
+    activeMetric: 'angle',      // 'angle' | 'velocity'
+    activePlane: 'XY',
+    isOrbitActive: false,
+    orbits: {}
+};
+const MAX_ORBIT = 40;
+const JOINT_NAMES = {
+    0: '頭部', 11: '左肩', 12: '右肩', 13: '左肘', 14: '右肘',
+    15: '左手首', 16: '右手首', 23: '左股関節', 24: '右股関節',
+    25: '左膝', 26: '右膝', 27: '左足首', 28: '右足首'
+};
+const reba = new REBAEngine();
+const clinical = new ClinicalEngine();
+let poseLandmarker, mainChart, isModelReady = false;
+let mediaRecorder, recordedChunks = [];
+// --- DOM要素 ---
+const el = {
+    video:          document.getElementById('input-video'),
+    canvas:         document.getElementById('output-canvas'),
+    overlay:        document.getElementById('processing-overlay'),
+    statusText:     document.getElementById('status-text'),
+    statusDot:      document.getElementById('status-dot'),
+    rebaVal:        document.getElementById('reba-score-value'),
+    riskBadge:      document.getElementById('risk-level-badge'),
+    backVal:        document.getElementById('back-load-value'),
+    kneeVal:        document.getElementById('knee-load-value'),
+    trackedVal:     document.getElementById('tracked-value'),
+    videoUpload:    document.getElementById('video-upload'),
+    toggleCam:      document.getElementById('toggle-cam'),
+    btnRecord:      document.getElementById('btn-record'),
+    setupModal:     document.getElementById('setup-modal'),
+    startBtn:       document.getElementById('start-analysis'),
+    selectorModal:  document.getElementById('selector-modal'),
+    btnShowSel:     document.getElementById('btn-show-selector'),
+    btnCloseSel:    document.getElementById('close-selector'),
+    planeSelect:    document.getElementById('plane-select'),
+    btnToggleOrbit: document.getElementById('btn-toggle-orbit'),
+    metricAngle:    document.getElementById('metric-angle'),
+    metricVelocity: document.getElementById('metric-velocity'),
+    compSection:    document.getElementById('comparison-section'),
+    compToggle:     document.getElementById('btn-compare-toggle-v2'),
+    compClose:      document.getElementById('btn-compare-close'),
+    refVideo:       document.getElementById('ref-video'),
+    targetVideo:    document.getElementById('target-video'),
+    refCanvas:      document.getElementById('ref-canvas'),
+    targetCanvas:   document.getElementById('target-canvas'),
+    refUpload:      document.getElementById('ref-upload'),
+    targetUpload:   document.getElementById('target-upload'),
+    syncPlay:       document.getElementById('sync-play'),
+    reportModal:    document.getElementById('report-container'),
+    closeReport:    document.getElementById('close-report'),
+    aiFeedback:     document.getElementById('ai-feedback'),
+    statsArea:      document.getElementById('alignment-stats'),
+    btnStop:        document.getElementById('btn-stop'),
+    btnExport:      document.getElementById('btn-export-direct'),
+    btnExport2:     document.getElementById('btn-export-v2'),
+    jointInfo:      document.getElementById('joint-info-panel'),
+    jointName:      document.getElementById('joint-name-display'),
+    jointValue:     document.getElementById('joint-value-display'),
+};
+const ctx = el.canvas.getContext('2d');
+const refCtx  = el.refCanvas?.getContext('2d');
+const targCtx = el.targetCanvas?.getContext('2d');
+// ================================================================
+// INIT
+// ================================================================
+async function init() {
+    setupEventListeners();
+    try {
+        updateStatus('AIモデル読込中...', '#f59e0b');
+        const vision = await FilesetResolver.forVisionTasks(
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.2/wasm"
+        );
+        poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+            baseOptions: {
+                modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`,
+                delegate: "GPU"
+            },
+            runningMode: "VIDEO", numPoses: 1
+        });
+        isModelReady = true;
+        updateStatus('準備完了', '#22c55e');
+        el.overlay?.classList.add('hidden');
+        initCharts();
+        log("AI System V2.1 Online. All features activated.");
+    } catch (err) {
+        log(`Fatal Error: ${err.message}`);
+        updateStatus('初期化失敗', '#ef4444');
+    }
+}
+function updateStatus(text, color) {
+    if (el.statusText) el.statusText.innerText = text;
+    if (el.statusDot) el.statusDot.style.backgroundColor = color;
+}
+// ================================================================
+// EVENT LISTENERS
+// ================================================================
+function setupEventListeners() {
+    const on = (idOrEl, type, fn) => {
+        const e = typeof idOrEl === 'string' ? document.getElementById(idOrEl) : idOrEl;
+        if (e) e.addEventListener(type, fn);
+    };
+    // デバッグログ表示
+    on('app-title', 'click', () => {
+        if (debugArea) debugArea.style.display = debugArea.style.display === 'block' ? 'none' : 'block';
+    });
+    // --- セットアップモーダル ---
+    document.querySelectorAll('.load-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.load-btn').forEach(b => b.classList.remove('bg-white', 'text-black'));
+            document.getElementById('btn-no-load')?.classList.remove('bg-white', 'text-black');
+            btn.classList.add('bg-white', 'text-black');
+            const v = btn.dataset.value;
+            state.setup.load = v === "2" ? 15 : v === "1" ? 7 : 3;
+        });
+    });
+    on('btn-no-load', 'click', () => {
+        document.querySelectorAll('.load-btn').forEach(b => b.classList.remove('bg-white', 'text-black'));
+        document.getElementById('btn-no-load').classList.add('bg-white', 'text-black');
+        state.setup.load = 0;
+    });
+    on('sudden-force', 'change', (e) => state.setup.suddenForce = e.target.checked);
+    on('coupling-select', 'change', (e) => state.setup.coupling = parseInt(e.target.value));
+    on(el.startBtn, 'click', () => {
+        if (!isModelReady) { alert("AIモデル準備中です。しばらくお待ちください。"); return; }
+        el.setupModal.classList.add('hidden');
+        if (!el.video.src && !el.video.srcObject) startCamera();
+    });
+    // --- カメラ・動画 ---
+    on(el.toggleCam, 'click', startCamera);
+    on(el.videoUpload, 'change', (e) => {
+        const file = e.target.files[0];
+        if (file) loadVideoFile(file, el.video, el.canvas);
+    });
+    // --- 部位選択モーダル ---
+    on(el.btnShowSel, 'click', () => el.selectorModal.classList.remove('hidden'));
+    on(el.btnCloseSel, 'click', () => el.selectorModal.classList.add('hidden'));
+    // 各関節ポイントのクリック
+    document.querySelectorAll('.joint-point').forEach(p => {
+        p.addEventListener('click', (e) => {
+            const id = parseInt(e.target.dataset.id);
+            const name = e.target.dataset.name || JOINT_NAMES[id] || `関節 ${id}`;
+            selectJoint(id, name);
+        });
+    });
+    // 解析メトリクス切替
+    on(el.metricAngle, 'click', () => {
+        state.activeMetric = 'angle';
+        el.metricAngle.classList.add('bg-white', 'text-black');
+        el.metricAngle.classList.remove('text-white/60');
+        el.metricVelocity.classList.remove('bg-white', 'text-black');
+        el.metricVelocity.classList.add('text-white/60');
+        log("Mode: Angle Analysis");
+    });
+    on(el.metricVelocity, 'click', () => {
+        state.activeMetric = 'velocity';
+        el.metricVelocity.classList.add('bg-white', 'text-black');
+        el.metricVelocity.classList.remove('text-white/60');
+        el.metricAngle.classList.remove('bg-white', 'text-black');
+        el.metricAngle.classList.add('text-white/60');
+        log("Mode: Velocity Analysis");
+    });
+    // 解析平面切替
+    on(el.planeSelect, 'change', (e) => {
+        state.activePlane = e.target.value;
+        log(`Plane: ${state.activePlane}`);
+    });
+    // 軌跡 ON/OFF
+    on(el.btnToggleOrbit, 'click', () => {
+        state.isOrbitActive = !state.isOrbitActive;
+        if (state.isOrbitActive) {
+            el.btnToggleOrbit.textContent = '🔵 軌跡表示: ON';
+            el.btnToggleOrbit.classList.add('bg-white', 'text-black');
+            el.btnToggleOrbit.classList.remove('text-white/60');
+        } else {
+            el.btnToggleOrbit.textContent = '🔵 軌跡表示: OFF';
+            el.btnToggleOrbit.classList.remove('bg-white', 'text-black');
+            el.btnToggleOrbit.classList.add('text-white/60');
+        }
+        log(`Orbit: ${state.isOrbitActive ? 'ON' : 'OFF'}`);
+    });
+    // --- 比較モード ---
+    on(el.compToggle, 'click', () => el.compSection.classList.remove('hidden'));
+    on(el.compClose, 'click', () => el.compSection.classList.add('hidden'));
+    on(el.refUpload, 'change', (e) => {
+        const f = e.target.files[0];
+        if (f) loadVideoFile(f, el.refVideo, el.refCanvas, false);
+    });
+    on(el.targetUpload, 'change', (e) => {
+        const f = e.target.files[0];
+        if (f) loadVideoFile(f, el.targetVideo, el.targetCanvas, true);
+    });
+    on(el.syncPlay, 'click', () => {
+        el.refVideo.currentTime = 0; el.targetVideo.currentTime = 0;
+        el.refVideo.play(); el.targetVideo.play();
+        state.isRunning = true; state.isComparing = true;
+        predict();
+    });
+    // --- 終了・レポート・録画 ---
+    on(el.btnStop, 'click', () => { state.isRunning = false; showReport(); });
+    on(el.closeReport, 'click', () => el.reportModal.classList.add('hidden'));
+    on(el.btnRecord, 'click', toggleRecording);
+    on(el.btnExport, 'click', exportCSV);
+    on(el.btnExport2, 'click', exportCSV);
+}
+function selectJoint(id, name) {
+    state.selectedPart = id;
+    state.selectedPartName = name;
+    state.orbits = {};  // 軌跡をリセット
+    log(`Tracking: ${name} (idx: ${id})`);
+    // 視覚的フィードバック
+    document.querySelectorAll('[id^="jp-"][id$="-dot"]').forEach(d => d.setAttribute('fill', '#555'));
+    const dot = document.getElementById(`jp-${id}-dot`);
+    if (dot) dot.setAttribute('fill', '#00ff88');
+    // パネル表示
+    if (el.jointInfo) el.jointInfo.classList.remove('hidden');
+    if (el.jointName) el.jointName.textContent = name;
+}
+// ================================================================
+// CAMERA / VIDEO
+// ================================================================
+async function startCamera() {
+    try {
+        log("カメラ起動中...");
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        el.video.srcObject = stream;
+        el.video.src = null;
+        el.video.load();
+        el.video.onloadedmetadata = () => {
+            el.canvas.width  = el.video.videoWidth;
+            el.canvas.height = el.video.videoHeight;
+            el.video.play();
+            state.isRunning = true;
+            predict();
         };
-        window.onunhandledrejection = function(e) {
-            const el = document.getElementById('debug-log');
-            if (el) { el.style.display = 'block'; el.innerHTML += `<div style="color:#ff4444"> [PROMISE] ${e.reason}</div>`; }
+    } catch (e) { log(`Camera Error: ${e.message}`); }
+}
+function loadVideoFile(file, video, canvas, isMain = true) {
+    log(`Loading: ${file.name}`);
+    video.srcObject = null;
+    video.src = URL.createObjectURL(file);
+    video.load();
+    video.onloadedmetadata = () => {
+        canvas.width  = video.videoWidth;
+        canvas.height = video.videoHeight;
+        video.play().then(() => {
+            log(`Playback started: ${file.name}`);
+            if (isMain) { state.isRunning = true; predict(); }
+        }).catch(e => log(`Play error: ${e.message}`));
+    };
+}
+// ================================================================
+// PREDICTION LOOP
+// ================================================================
+function predict() {
+    if (state.isPredicting) return;
+    state.isPredicting = true;
+    const loop = () => {
+        if (!state.isRunning) { state.isPredicting = false; return; }
+        if (!el.compSection.classList.contains('hidden') && state.isComparing) {
+            processFrame(el.refVideo,    el.refCanvas,    refCtx,  false);
+            processFrame(el.targetVideo, el.targetCanvas, targCtx, true);
+        } else {
+            processFrame(el.video, el.canvas, ctx, true);
+        }
+        requestAnimationFrame(loop);
+    };
+    loop();
+}
+function processFrame(video, canvas, context, isMain) {
+    if (!video || video.paused || video.ended || video.readyState < 2) return;
+    const ts = performance.now();
+    try {
+        const res = poseLandmarker.detectForVideo(video, ts);
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        if (res.landmarks?.[0]) {
+            const lm = res.landmarks[0];
+            const du = new DrawingUtils(context);
+            const color = isMain ? '#ffffff' : '#60a5fa';
+            du.drawConnectors(lm, PoseLandmarker.POSE_CONNECTIONS, { color, lineWidth: 2 });
+            du.drawLandmarks(lm, { color: isMain ? '#00ff88' : '#3b82f6', radius: 3, lineWidth: 1 });
+            if (isMain) {
+                updateOrbits(lm);
+                if (state.isOrbitActive) drawOrbits(context, canvas);
+                highlightSelected(context, canvas, lm);
+                if (isMain) calculateAnalytics(lm);
+            }
+        }
+    } catch (_) {}
+}
+function highlightSelected(context, canvas, lm) {
+    const p = lm[state.selectedPart];
+    if (!p) return;
+    const x = p.x * canvas.width, y = p.y * canvas.height;
+    context.beginPath();
+    context.arc(x, y, 12, 0, Math.PI * 2);
+    context.strokeStyle = '#00ff88';
+    context.lineWidth = 3;
+    context.stroke();
+    context.beginPath();
+    context.arc(x, y, 18, 0, Math.PI * 2);
+    context.strokeStyle = 'rgba(0,255,136,0.3)';
+    context.lineWidth = 2;
+    context.stroke();
+}
+function updateOrbits(lm) {
+    const p = lm[state.selectedPart];
+    if (!p) return;
+    if (!state.orbits[state.selectedPart]) state.orbits[state.selectedPart] = [];
+    state.orbits[state.selectedPart].push({ x: p.x, y: p.y, z: p.z, t: Date.now() });
+    if (state.orbits[state.selectedPart].length > MAX_ORBIT) state.orbits[state.selectedPart].shift();
+}
+function drawOrbits(context, canvas) {
+    const pts = state.orbits[state.selectedPart];
+    if (!pts || pts.length < 2) return;
+    for (let i = 1; i < pts.length; i++) {
+        const alpha = i / pts.length;
+        context.beginPath();
+        context.moveTo(pts[i-1].x * canvas.width, pts[i-1].y * canvas.height);
+        context.lineTo(pts[i].x   * canvas.width, pts[i].y   * canvas.height);
+        context.strokeStyle = `rgba(0, 255, 136, ${alpha * 0.85})`;
+        context.lineWidth = 2 + alpha * 2;
+        context.stroke();
+    }
+}
+// ================================================================
+// ANALYTICS
+// ================================================================
+function calculateAnalytics(lm) {
+    // 体幹角度
+    const sC = { x: (lm[11].x + lm[12].x) / 2, y: (lm[11].y + lm[12].y) / 2 };
+    const hC = { x: (lm[23].x + lm[24].x) / 2, y: (lm[23].y + lm[24].y) / 2 };
+    const trunkAngle = Math.abs(Math.atan2(sC.x - hC.x, hC.y - sC.y) * 180 / Math.PI);
+    // 膝角度（右膝）
+    const kneeAngle = calcAngle3(lm[24], lm[26], lm[28]);
+    // REBA簡易スコア
+    const trunkScore = trunkAngle > 60 ? 4 : trunkAngle > 40 ? 3 : trunkAngle > 20 ? 2 : 1;
+    const loadScore = state.setup.load > 10 ? 3 : state.setup.load > 5 ? 2 : state.setup.load > 0 ? 1 : 0;
+    const score = Math.max(1, Math.min(15, trunkScore + loadScore + (state.setup.suddenForce ? 1 : 0)));
+    state.rebaScore = score;
+    // 速度計算（選択部位）
+    let velocity = 0;
+    const pts = state.orbits[state.selectedPart];
+    if (pts && pts.length >= 2) {
+        const a = pts[pts.length - 2], b = pts[pts.length - 1];
+        const dist = Math.sqrt((b.x-a.x)**2 + (b.y-a.y)**2);
+        const dt = (b.t - a.t) / 1000;
+        velocity = dt > 0 ? dist / dt : 0;
+    }
+    // UI更新
+    el.rebaVal.innerText = score;
+    const action = reba.getActionLevel(score);
+    el.riskBadge.innerText = action.risk;
+    el.riskBadge.style.backgroundColor = action.color;
+    el.backVal.innerText  = `${trunkAngle.toFixed(0)}°`;
+    el.kneeVal.innerText  = `${kneeAngle.toFixed(0)}°`;
+    // 追跡部位の値表示
+    const displayVal = state.activeMetric === 'velocity'
+        ? `${(velocity * 100).toFixed(1)} cm/s`
+        : `${trunkAngle.toFixed(1)}°`;
+    el.trackedVal.innerText = displayVal;
+    if (el.jointValue) el.jointValue.textContent = displayVal;
+    state.history.push({
+        timestamp: Date.now(), score,
+        trunk: trunkAngle, knee: kneeAngle, velocity
+    });
+}
+function calcAngle3(A, B, C) {
+    const v1 = { x: A.x-B.x, y: A.y-B.y };
+    const v2 = { x: C.x-B.x, y: C.y-B.y };
+    const dot = v1.x*v2.x + v1.y*v2.y;
+    const mag = Math.sqrt(v1.x**2+v1.y**2) * Math.sqrt(v2.x**2+v2.y**2);
+    return Math.acos(Math.max(-1, Math.min(1, dot/mag))) * 180 / Math.PI;
+}
+// ================================================================
+// CHARTS
+// ================================================================
+function initCharts() {
+    const c = document.getElementById('main-chart');
+    if (!c) return;
+    mainChart = new Chart(c, {
+        type: 'line',
+        data: {
+            datasets: [
+                { label: 'REBAスコア', data: [], borderColor: '#ffffff', borderWidth: 2, pointRadius: 0, yAxisID: 'y' },
+                { label: '体幹角度', data: [], borderColor: '#00ff88', borderWidth: 1, pointRadius: 0, yAxisID: 'y2', borderDash: [4,2] }
+            ]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            animation: false,
+            scales: {
+                x: { type: 'realtime', ticks: { color: '#555', font: { size: 8 } }, grid: { color: '#222' } },
+                y: { min: 0, max: 15, ticks: { color: '#555', font: { size: 8 } }, grid: { color: '#222' } },
+                y2: { min: 0, max: 90, position: 'right', ticks: { color: '#00ff88', font: { size: 8 } }, grid: { display: false } }
+            },
+            plugins: { legend: { labels: { color: '#555', font: { size: 8 } } } }
+        }
+    });
+    setInterval(() => {
+        if (!state.isRunning || !mainChart) return;
+        const h = state.history[state.history.length - 1];
+        if (!h) return;
+        mainChart.data.datasets[0].data.push({ x: Date.now(), y: h.score });
+        mainChart.data.datasets[1].data.push({ x: Date.now(), y: h.trunk });
+    }, 500);
+}
+// ================================================================
+// REPORT
+// ================================================================
+function showReport() {
+    const feedback = clinical.generateReport({ history: state.history, setup: state.setup });
+    el.aiFeedback.innerHTML = '';
+    feedback.forEach(item => {
+        const d = document.createElement('div');
+        d.className = 'p-4 rounded-xl border border-white/10 bg-white/5';
+        const riskColor = item.color || '#6b7280';
+        d.innerHTML = `
+            <div class="flex justify-between items-center mb-2">
+                <span class="text-[10px] font-black text-white">${item.part}</span>
+                <span class="text-[8px] font-bold px-2 py-0.5 rounded-full" style="background:${riskColor}20; color:${riskColor}; border:1px solid ${riskColor}40">${item.priority}</span>
+            </div>
+            <p class="text-[10px] leading-relaxed text-white/70">${item.comment}</p>
+        `;
+        el.aiFeedback.appendChild(d);
+    });
+    const h = state.history;
+    const maxTrunk = h.length ? Math.max(...h.map(x => x.trunk)).toFixed(1) : 0;
+    const maxKnee  = h.length ? Math.max(...h.map(x => x.knee)).toFixed(1)  : 0;
+    const avgScore = h.length ? (h.reduce((a,b) => a+b.score, 0) / h.length).toFixed(1) : 0;
+    el.statsArea.innerHTML = `
+        <div class="glass rounded-lg p-2 text-center"><div class="text-[8px] text-white/40">最大体幹角度</div><div class="font-black text-sm">${maxTrunk}°</div></div>
+        <div class="glass rounded-lg p-2 text-center"><div class="text-[8px] text-white/40">最大膝屈曲</div><div class="font-black text-sm">${maxKnee}°</div></div>
+        <div class="glass rounded-lg p-2 text-center"><div class="text-[8px] text-white/40">平均REBAスコア</div><div class="font-black text-sm">${avgScore}</div></div>
+        <div class="glass rounded-lg p-2 text-center"><div class="text-[8px] text-white/40">解析フレーム数</div><div class="font-black text-sm">${h.length}</div></div>
+    `;
+    el.reportModal.classList.remove('hidden');
+}
+// ================================================================
+// RECORDING & EXPORT
+// ================================================================
+function toggleRecording() {
+    if (!state.isRecording) {
+        recordedChunks = [];
+        const stream = el.canvas.captureStream(30);
+        const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
+        mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+        mediaRecorder.ondataavailable = (e) => recordedChunks.push(e.data);
+        mediaRecorder.onstop = () => {
+            const blob = new Blob(recordedChunks, { type: mime });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `Analysis_${Date.now()}.webm`;
+            a.click();
         };
-    </script>
-    <script type="module" src="main.js?v=final3"></script>
-</body>
-</html>
+        mediaRecorder.start();
+        state.isRecording = true;
+        document.getElementById('record-icon').style.borderRadius = '2px';
+        log("録画開始");
+    } else {
+        mediaRecorder.stop();
+        state.isRecording = false;
+        document.getElementById('record-icon').style.borderRadius = '50%';
+        log("録画停止・保存");
+    }
+}
+function exportCSV() {
+    if (state.history.length === 0) { alert("解析データがありません"); return; }
+    let csv = "\uFEFF時刻,REBAスコア,体幹角度（度）,膝角度（度）,速度\n";
+    state.history.forEach(h => {
+        csv += `${new Date(h.timestamp).toLocaleTimeString('ja-JP')},${h.score},${h.trunk.toFixed(1)},${h.knee.toFixed(1)},${h.velocity.toFixed(3)}\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `REBA_Data_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    log("CSVをエクスポートしました");
+}
+init();
