@@ -11,10 +11,21 @@ export class ClinicalEngine {
         };
     }
     generateReport(data) {
-        const { history, setup } = data;
-        if (!history || history.length === 0) return [{ part: "データなし", priority: "情報", comment: "分析データが不足しています。" }];
+        const { history, setup, taskContext } = data;
+        if (!history || history.length === 0) return [{ part: "データなし", priority: "情報", color:'#6b7280', comment: "分析データが不足しています。" }];
         const stats = this.analyzeStats(history);
         let feedback = [];
+        // 0. 作業コンテキストからの事前リスク（入力があった場合）
+        if (taskContext && taskContext.riskFactors.length > 0) {
+            feedback.push({
+                part: "作業特有のリスク（AI事前分析）",
+                priority: "参考情報",
+                color: '#60a5fa',
+                comment: `この作業では以下のリスクが想定されます：${taskContext.riskFactors.join('・')}。` +
+                         `特に注意すべき部位：${taskContext.bodySites.join('・')}。` +
+                         `【推奨対策】${taskContext.precautions.join(' また、')}`
+            });
+        }
         // 1. 体幹（腰椎）の分析
         if (stats.maxTrunk > this.expertThresholds.trunkFlexion) {
             const severity = stats.maxTrunk > 60 ? "高" : stats.maxTrunk > 40 ? "中" : "低";
