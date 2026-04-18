@@ -49,7 +49,7 @@
     <!-- Main Viewport -->
     <main class="flex-1 flex flex-col gap-6 max-w-5xl mx-auto w-full">
         <div class="relative w-full aspect-video bg-black neon-border overflow-hidden rounded-sm" id="viewport">
-            <video id="input-video" class="hidden" playsinline muted loop webkit-playsinline></video>
+            <video id="input-video" playsinline muted loop webkit-playsinline style="position:absolute; opacity:0; pointer-events:none; width:1px; height:1px;"></video>
             <canvas id="output-canvas"></canvas>
             
             <!-- Floating Controls -->
