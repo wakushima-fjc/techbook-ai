@@ -471,47 +471,88 @@ function highlightSelected(context, canvas, lm) {
     });
 }
 // ============================================================
-// ANALYTICS
+// ANALYTICS  ★ JARM 2022年改訂版 ROM 基準準拠 ★
 // ============================================================
 function calculateAnalytics(pl) {
-    const sC = { x: (pl[11].x+pl[12].x)/2, y: (pl[11].y+pl[12].y)/2 };
-    const hC = { x: (pl[23].x+pl[24].x)/2, y: (pl[23].y+pl[24].y)/2 };
-    const trunkAngle = Math.abs(Math.atan2(sC.x-hC.x, hC.y-sC.y) * 180 / Math.PI);
-    const kneeAngle  = calcAngle3(pl[24], pl[26], pl[28]);
-    const trunkScore = trunkAngle > 60 ? 4 : trunkAngle > 40 ? 3 : trunkAngle > 20 ? 2 : 1;
-    const loadScore  = state.setup.load > 10 ? 3 : state.setup.load > 5 ? 2 : state.setup.load > 0 ? 1 : 0;
-    const score = Math.max(1, Math.min(15, trunkScore + loadScore + (state.setup.suddenForce ? 1 : 0)));
+    // ── 体幹前傾角（REBA / JARM基準: 0-90°） ──────────────────────
+    // MediaPipe座標系: y は画面下方向が正。直立 = 肩が股関節の真上(dx≈0, dy>0) → 0°
+    // 前傾時 = 肩が股関節より水平方向に移動 → dx増加 → 角度増加
+    const sC = { x: (pl[11].x + pl[12].x) / 2, y: (pl[11].y + pl[12].y) / 2 };
+    const hC = { x: (pl[23].x + pl[24].x) / 2, y: (pl[23].y + pl[24].y) / 2 };
+    const dx_trunk = sC.x - hC.x;
+    const dy_trunk = hC.y - sC.y;  // 正 = 肩が股関節より上（正常な直立）
+    const trunkFlex = Math.round(
+        Math.max(0, Math.min(90,
+            Math.atan2(Math.abs(dx_trunk), Math.max(dy_trunk, 0.001)) * 180 / Math.PI
+        ))
+    );
+    // ── 頸部前傾角（JARM基準: 0-60°） ────────────────────────────
+    const nose = pl[0];
+    const ndx = nose.x - sC.x;
+    const ndy = sC.y - nose.y;  // 正 = 頭が肩より上
+    const neckFlex = Math.round(
+        Math.max(0, Math.min(60,
+            Math.atan2(Math.abs(ndx), Math.max(ndy, 0.001)) * 180 / Math.PI
+        ))
+    );
+    // ── 膝屈曲角（JARM基準: 0-150°） ─────────────────────────────
+    // calcAngle3は「なす角」を返す → 伸展時≈180°
+    // 屈曲角 = 180° - なす角（伸展=0°, 完全屈曲≈150°）
+    const kneeIncluded = calcAngle3(pl[24], pl[26], pl[28]);
+    const kneeFlexion = Math.round(
+        Math.max(0, Math.min(150, 180 - kneeIncluded))
+    );
+    // ── REBA スコア（エンジンの正式計算） ────────────────────────
+    const score = reba.calcFromAngles({
+        trunkFlex,
+        neckFlex,
+        kneeFlexion,
+        load:        state.setup.load,
+        suddenForce: state.setup.suddenForce,
+        coupling:    state.setup.coupling
+    });
     state.rebaScore = score;
-    // 速度（全選択部位の平均）
+    // ── 速度（全選択部位の平均） ──────────────────────────────────
     let totalVel = 0, velCount = 0;
     state.selectedParts.forEach(id => {
         const pts = state.orbits[id];
         if (pts && pts.length >= 2) {
             const a = pts[pts.length-2], b = pts[pts.length-1];
-            const dist = Math.sqrt((b.x-a.x)**2+(b.y-a.y)**2);
+            const dist = Math.sqrt((b.x-a.x)**2 + (b.y-a.y)**2);
             const dt = (b.t - a.t) / 1000;
             if (dt > 0) { totalVel += dist / dt; velCount++; }
         }
     });
     const velocity = velCount > 0 ? totalVel / velCount : 0;
-    // UI 更新
+    // ── UI 更新 ───────────────────────────────────────────────────
     el.rebaVal.innerText = score;
     const action = reba.getActionLevel(score);
     el.riskBadge.innerText = action.risk;
     el.riskBadge.style.backgroundColor = action.color;
-    el.backVal.innerText = `${trunkAngle.toFixed(0)}°`;
-    el.kneeVal.innerText = `${kneeAngle.toFixed(0)}°`;
+    // JARM基準との比較表示 (体幹: 正常前屈 45°)
+    const trunkLabel = trunkFlex > 45 ? `${trunkFlex}° ⚠超過` :
+                       trunkFlex > 20 ? `${trunkFlex}° 要注意` : `${trunkFlex}° 正常`;
+    el.backVal.innerText = trunkLabel;
+    // JARM基準との比較表示 (膝屈曲: 正常 0-150°)
+    const kneeLabel = kneeFlexion > 120 ? `${kneeFlexion}° 深屈曲` :
+                      kneeFlexion > 60  ? `${kneeFlexion}° 中屈曲` : `${kneeFlexion}° 軽度`;
+    el.kneeVal.innerText = kneeLabel;
     el.trackedVal.innerText = state.activeMetric === 'velocity'
-        ? `${(velocity*100).toFixed(1)} cm/s`
-        : `${trunkAngle.toFixed(1)}°`;
-    state.history.push({ timestamp: Date.now(), score, trunk: trunkAngle, knee: kneeAngle, velocity });
+        ? `${(velocity * 100).toFixed(1)} cm/s`
+        : `体幹${trunkFlex}° / 膝${kneeFlexion}°`;
+    state.history.push({
+        timestamp: Date.now(), score,
+        trunk: trunkFlex, neck: neckFlex,
+        knee: kneeFlexion, velocity
+    });
 }
 function calcAngle3(A, B, C) {
-    const v1 = { x: A.x-B.x, y: A.y-B.y };
-    const v2 = { x: C.x-B.x, y: C.y-B.y };
-    const dot = v1.x*v2.x + v1.y*v2.y;
-    const mag = Math.sqrt(v1.x**2+v1.y**2) * Math.sqrt(v2.x**2+v2.y**2);
-    return Math.acos(Math.max(-1, Math.min(1, dot/mag))) * 180 / Math.PI;
+    const v1 = { x: A.x - B.x, y: A.y - B.y };
+    const v2 = { x: C.x - B.x, y: C.y - B.y };
+    const dot = v1.x * v2.x + v1.y * v2.y;
+    const mag = Math.sqrt(v1.x**2 + v1.y**2) * Math.sqrt(v2.x**2 + v2.y**2);
+    if (mag < 0.0001) return 0;
+    return Math.acos(Math.max(-1, Math.min(1, dot / mag))) * 180 / Math.PI;
 }
 // ============================================================
 // CHARTS
