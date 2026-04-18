@@ -3,8 +3,9 @@ import {
   FilesetResolver,
   DrawingUtils
 } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.2/+esm";
-import { REBAEngine } from "./reba-engine.js";
+import { REBAEngine }    from "./reba-engine.js";
 import { ClinicalEngine } from "./clinical-engine.js";
+import { checkAllROM, getROMStatus } from "./rom-reference.js";
 // ============================================================
 // デバッグログ
 // ============================================================
@@ -471,48 +472,59 @@ function highlightSelected(context, canvas, lm) {
     });
 }
 // ============================================================
-// ANALYTICS  ★ JARM 2022年改訂版 ROM 基準準拠 ★
+// ANALYTICS  ★ JARM 2022年改訂版 全関節ROM計算 ★
+// 参考: 日本リハビリテーション医学会 関節可動域表示ならびに測定法
 // ============================================================
+/**
+ * 2Dランドマーク (ax,ay) → (bx,by) のベクトルと
+ * 鉛直下方向 (0, +1) とのなす角を返す（0-180°）
+ * JARM定義「床への垂直線を基本軸」に対応
+ */
+function angleFromVertical(ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay;
+    return Math.round(Math.max(0, Math.min(180,
+        Math.atan2(Math.abs(dx), Math.max(dy, 0.001)) * 180 / Math.PI
+    )));
+}
 function calculateAnalytics(pl) {
-    // ── 体幹前傾角（REBA / JARM基準: 0-90°） ──────────────────────
-    // MediaPipe座標系: y は画面下方向が正。直立 = 肩が股関節の真上(dx≈0, dy>0) → 0°
-    // 前傾時 = 肩が股関節より水平方向に移動 → dx増加 → 角度増加
+    // ── 体幹前屈 [JARM基準: 0-45°] ───────────────────────────────
+    // JARM測定法: 基本軸＝仙骨後面（床への垂直線）, 移動軸＝T1-L5棘突起を結ぶ線
+    // MediaPipe近似: 股関節中心(L5代理)→肩中心(T1代理) vs 鉛直
     const sC = { x: (pl[11].x + pl[12].x) / 2, y: (pl[11].y + pl[12].y) / 2 };
     const hC = { x: (pl[23].x + pl[24].x) / 2, y: (pl[23].y + pl[24].y) / 2 };
-    const dx_trunk = sC.x - hC.x;
-    const dy_trunk = hC.y - sC.y;  // 正 = 肩が股関節より上（正常な直立）
-    const trunkFlex = Math.round(
-        Math.max(0, Math.min(90,
-            Math.atan2(Math.abs(dx_trunk), Math.max(dy_trunk, 0.001)) * 180 / Math.PI
-        ))
-    );
-    // ── 頸部前傾角（JARM基準: 0-60°） ────────────────────────────
-    const nose = pl[0];
-    const ndx = nose.x - sC.x;
-    const ndy = sC.y - nose.y;  // 正 = 頭が肩より上
-    const neckFlex = Math.round(
-        Math.max(0, Math.min(60,
-            Math.atan2(Math.abs(ndx), Math.max(ndy, 0.001)) * 180 / Math.PI
-        ))
-    );
-    // ── 膝屈曲角（JARM基準: 0-150°） ─────────────────────────────
-    // calcAngle3は「なす角」を返す → 伸展時≈180°
-    // 屈曲角 = 180° - なす角（伸展=0°, 完全屈曲≈150°）
-    const kneeIncluded = calcAngle3(pl[24], pl[26], pl[28]);
-    const kneeFlexion = Math.round(
-        Math.max(0, Math.min(150, 180 - kneeIncluded))
-    );
-    // ── REBA スコア（エンジンの正式計算） ────────────────────────
+    const trunkFlex = Math.min(90, angleFromVertical(hC.x, hC.y, sC.x, sC.y));
+    // ── 頸部前屈 [JARM基準: 0-60°] ───────────────────────────────
+    // JARM測定法: 基本軸＝肩峰を通る床への垂直線, 移動軸＝外耳孔→頭頂線
+    // MediaPipe近似: 肩中心(基本軸底点)→nose(頭頂代理) vs 鉛直
+    const neckFlex = Math.min(60, angleFromVertical(sC.x, sC.y, pl[0].x, pl[0].y));
+    // ── 右肩関節屈曲 [JARM基準: 0-180°] ─────────────────────────
+    // JARM測定法: 基本軸＝肩峰を通る床への垂直線, 移動軸＝上腕骨(肩→肘)
+    // 屈曲角＝下方鉛直から上腕骨ベクトルへのなす角
+    // ※下方鉛直(腕下垂)=0°, 水平 =90°, 頭頂 =180°
+    const shoulderR = Math.min(180, angleFromVertical(pl[12].x, pl[12].y, pl[14].x, pl[14].y));
+    const shoulderL = Math.min(180, angleFromVertical(pl[11].x, pl[11].y, pl[13].x, pl[13].y));
+    // ── 右肘関節屈曲 [JARM基準: 0-145°] ─────────────────────────
+    // JARM測定法: 基本軸＝上腕骨(肩→肘), 移動軸＝橈骨(肘→手首)
+    // 屈曲角＝180° - 肩→肘→手首 のなす角（伸展=0°, 完全屈曲=145°）
+    const elbowR = Math.round(Math.max(0, Math.min(145, 180 - calcAngle3(pl[12], pl[14], pl[16]))));
+    const elbowL = Math.round(Math.max(0, Math.min(145, 180 - calcAngle3(pl[11], pl[13], pl[15]))));
+    // ── 右股関節屈曲 [JARM基準: 0-125°] ─────────────────────────
+    // JARM測定法: 基本軸＝体幹と平行な線(下方鉛直), 移動軸＝大腿骨(股→膝)
+    // 屈曲角＝下方鉛直から大腿骨ベクトルへのなす角（直立=0°, 前方水平=90°, 完全屈曲=125°）
+    const hipR = Math.min(125, angleFromVertical(pl[24].x, pl[24].y, pl[26].x, pl[26].y));
+    const hipL = Math.min(125, angleFromVertical(pl[23].x, pl[23].y, pl[25].x, pl[25].y));
+    // ── 右膝関節屈曲 [JARM基準: 0-130°] ─────────────────────────
+    // JARM測定法: 基本軸＝大腿骨(股→膝), 移動軸＝腓骨(膝→外果≈足首)
+    // 屈曲角＝180° - 股→膝→足首 のなす角（伸展=0°, 完全屈曲=130°）
+    const kneeR = Math.round(Math.max(0, Math.min(130, 180 - calcAngle3(pl[24], pl[26], pl[28]))));
+    const kneeL = Math.round(Math.max(0, Math.min(130, 180 - calcAngle3(pl[23], pl[25], pl[27]))));
+    // ── REBA スコア（正式エンジン計算） ──────────────────────────
     const score = reba.calcFromAngles({
-        trunkFlex,
-        neckFlex,
-        kneeFlexion,
-        load:        state.setup.load,
-        suddenForce: state.setup.suddenForce,
-        coupling:    state.setup.coupling
+        trunkFlex, neckFlex, kneeFlexion: kneeR,
+        load: state.setup.load, suddenForce: state.setup.suddenForce, coupling: state.setup.coupling
     });
     state.rebaScore = score;
-    // ── 速度（全選択部位の平均） ──────────────────────────────────
+    // ── 速度（選択部位の平均） ────────────────────────────────────
     let totalVel = 0, velCount = 0;
     state.selectedParts.forEach(id => {
         const pts = state.orbits[id];
@@ -524,27 +536,52 @@ function calculateAnalytics(pl) {
         }
     });
     const velocity = velCount > 0 ? totalVel / velCount : 0;
-    // ── UI 更新 ───────────────────────────────────────────────────
+    // ── UI更新（メインカード） ────────────────────────────────────
     el.rebaVal.innerText = score;
     const action = reba.getActionLevel(score);
     el.riskBadge.innerText = action.risk;
     el.riskBadge.style.backgroundColor = action.color;
-    // JARM基準との比較表示 (体幹: 正常前屈 45°)
-    const trunkLabel = trunkFlex > 45 ? `${trunkFlex}° ⚠超過` :
-                       trunkFlex > 20 ? `${trunkFlex}° 要注意` : `${trunkFlex}° 正常`;
-    el.backVal.innerText = trunkLabel;
-    // JARM基準との比較表示 (膝屈曲: 正常 0-150°)
-    const kneeLabel = kneeFlexion > 120 ? `${kneeFlexion}° 深屈曲` :
-                      kneeFlexion > 60  ? `${kneeFlexion}° 中屈曲` : `${kneeFlexion}° 軽度`;
-    el.kneeVal.innerText = kneeLabel;
+    // 体幹・膝の色付き表示
+    const ts = getROMStatus('trunk', 'flexion', trunkFlex);
+    el.backVal.innerText   = ts.label;
+    el.backVal.style.color = ts.color;
+    const ks = getROMStatus('knee', 'flexion', kneeR);
+    el.kneeVal.innerText   = ks.label;
+    el.kneeVal.style.color = ks.color;
     el.trackedVal.innerText = state.activeMetric === 'velocity'
         ? `${(velocity * 100).toFixed(1)} cm/s`
-        : `体幹${trunkFlex}° / 膝${kneeFlexion}°`;
+        : `体幹${trunkFlex}° / 膝${kneeR}°`;
+    // ── ROM アラートパネルの更新 ──────────────────────────────────
+    updateROMPanel(checkAllROM({ trunk: trunkFlex, neck: neckFlex, shoulderR, elbowR, hipR, kneeR }));
+    // 履歴保存
     state.history.push({
         timestamp: Date.now(), score,
         trunk: trunkFlex, neck: neckFlex,
-        knee: kneeFlexion, velocity
+        shoulderR, elbowR, hipR,
+        knee: kneeR, velocity
     });
+}
+/**
+ * ROM アラートパネルをリアルタイム更新
+ * 各関節の計測値 vs JARM基準値を色分け表示
+ * 90%以上 → 黄色警告、100%以上 → 赤色アラート
+ */
+function updateROMPanel(statuses) {
+    const panel = document.getElementById('rom-status-panel');
+    if (!panel) return;
+    panel.innerHTML = statuses.map(s => {
+        const barWidth = Math.min(100, Math.round(s.ratio * 100));
+        const barColor = s.color;
+        return `
+        <div class="flex items-center gap-2 py-0.5 px-1 rounded" style="background:${s.bg}">
+            <span class="text-[8px] font-bold shrink-0 w-14 text-white/60">${s.name}</span>
+            <div class="flex-1 h-1 rounded-full bg-white/10 overflow-hidden">
+                <div style="width:${barWidth}%;background:${barColor};height:100%;border-radius:999px;"></div>
+            </div>
+            <span class="text-[8px] font-black shrink-0 w-20 text-right ${s.pulse ? 'animate-pulse' : ''}"
+                  style="color:${s.color}">${s.label}</span>
+        </div>`;
+    }).join('');
 }
 function calcAngle3(A, B, C) {
     const v1 = { x: A.x - B.x, y: A.y - B.y };
